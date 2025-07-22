@@ -36,11 +36,21 @@ DATA_DIR = BASE_DIR / "data"
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)
 
-# Telegram Bot
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Telegram Bot (try multiple possible names)
+TELEGRAM_BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN") or 
+    os.getenv("Telegram_Token") or 
+    os.getenv("TELEGRAM_TOKEN") or
+    os.getenv("BOT_TOKEN")
+)
 
-# OpenAI GPT-4o
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# OpenAI GPT-4o (try multiple possible names)
+OPENAI_API_KEY = (
+    os.getenv("OPENAI_API_KEY") or 
+    os.getenv("OPENAI_API_Key") or 
+    os.getenv("OPENAI_TOKEN") or
+    os.getenv("GPT_API_KEY")
+)
 
 # Проверка критических переменных в runtime, а не при импорте
 def validate_required_env_vars():
