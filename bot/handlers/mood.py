@@ -127,7 +127,7 @@ async def mood_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         
         # Create the actual playlist
-        playlist_info = create_user_playlist(
+        playlist_info = await create_user_playlist(
             user_id=user.id,
             service=music_service,
             mood_params=mood_params,

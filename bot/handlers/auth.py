@@ -230,6 +230,9 @@ async def handle_auth_callback(code: str, state: str) -> bool:
             # Set service in session (in case it wasn't set before)
             user_sessions.set_session_data(user_id, "music_service", "spotify")
             
+            # Send success notification to user in Telegram
+            await send_auth_success_notification(user_id)
+            
             return True
         else:
             logger.error(f"Failed to authorize user {user_id} for Spotify")
@@ -238,6 +241,54 @@ async def handle_auth_callback(code: str, state: str) -> bool:
     except Exception as e:
         logger.error(f"Error handling auth callback: {e}")
         return False
+
+
+async def send_auth_success_notification(user_id: int) -> None:
+    """Send authorization success notification to user via Telegram."""
+    try:
+        from telegram import Bot
+        from config.settings import TELEGRAM_BOT_TOKEN
+        
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        user_language = user_sessions.get_session_data(user_id, "language", "en")
+        
+        if user_language == "ru":
+            message = (
+                "🎉 Отлично! Spotify авторизация завершена!\n\n"
+                "Теперь вы можете создавать персональные плейлисты!\n\n"
+                "📝 Просто опишите ваше настроение:\n"
+                "• \"спокойный вечер дома\"\n"
+                "• \"энергичная тренировка\"\n"
+                "• \"меланхолия и дождь\"\n\n"
+                "🎵 Я создам идеальный плейлист для вашего настроения!"
+            )
+        elif user_language == "es":
+            message = (
+                "🎉 ¡Excelente! ¡Autorización de Spotify completada!\n\n"
+                "¡Ahora puedes crear listas personalizadas!\n\n"
+                "📝 Simplemente describe tu estado de ánimo:\n"
+                "• \"tarde tranquila en casa\"\n"
+                "• \"entrenamiento energético\"\n"
+                "• \"melancolía y lluvia\"\n\n"
+                "🎵 ¡Crearé la lista perfecta para tu estado de ánimo!"
+            )
+        else:  # English
+            message = (
+                "🎉 Great! Spotify authorization completed!\n\n"
+                "Now you can create personalized playlists!\n\n"
+                "📝 Just describe your mood:\n"
+                "• \"quiet evening at home\"\n"
+                "• \"energetic workout\"\n"
+                "• \"melancholy and rain\"\n\n"
+                "🎵 I'll create the perfect playlist for your mood!"
+            )
+        
+        await bot.send_message(chat_id=user_id, text=message)
+        logger.info(f"Sent authorization success notification to user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to send auth success notification to user {user_id}: {e}")
+        # Don't raise the exception - auth was successful even if notification failed
 
 
 # Command to manually check authorization status

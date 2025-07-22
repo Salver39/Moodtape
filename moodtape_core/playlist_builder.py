@@ -340,7 +340,7 @@ class PlaylistBuilder:
         return None
 
 
-def create_user_playlist(
+async def create_user_playlist(
     user_id: int,
     service: str,
     mood_params: MoodParameters,
@@ -362,13 +362,5 @@ def create_user_playlist(
     """
     builder = PlaylistBuilder(user_id, service)
     
-    # Note: This would ideally be async, but keeping sync for simplicity
-    # In production, you'd want to use asyncio.run() or similar
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(
-            builder.build_mood_playlist(mood_params, mood_description, playlist_length)
-        )
-    finally:
-        loop.close() 
+    # Now properly async - no event loop conflicts
+    return await builder.build_mood_playlist(mood_params, mood_description, playlist_length) 
