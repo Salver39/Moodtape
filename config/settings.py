@@ -16,13 +16,25 @@ DATA_DIR.mkdir(exist_ok=True)
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable is required")
 
 # OpenAI GPT-4o
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY environment variable is required")
+
+# Проверка критических переменных в runtime, а не при импорте
+def validate_required_env_vars():
+    """Проверяет наличие обязательных переменных окружения"""
+    missing_vars = []
+    
+    if not TELEGRAM_BOT_TOKEN:
+        missing_vars.append("TELEGRAM_BOT_TOKEN")
+    
+    if not OPENAI_API_KEY:
+        missing_vars.append("OPENAI_API_KEY")
+    
+    if missing_vars:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+    
+    return True
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.5"))

@@ -9,7 +9,7 @@ from telegram.ext import (
     filters
 )
 
-from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL
+from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL, validate_required_env_vars
 from utils.logger import get_logger
 from bot.handlers.start import start_command, service_selection_callback, help_command
 from bot.handlers.mood import mood_message_handler
@@ -27,6 +27,15 @@ logger = get_logger(__name__)
 
 def main() -> None:
     """Start the bot."""
+    # Validate required environment variables
+    try:
+        validate_required_env_vars()
+        logger.info("✅ All required environment variables are configured")
+    except ValueError as e:
+        logger.error(f"❌ Configuration error: {e}")
+        logger.error("Please set the required environment variables and restart the bot")
+        return
+    
     # Create application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
