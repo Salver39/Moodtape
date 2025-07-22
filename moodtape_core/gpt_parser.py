@@ -13,8 +13,17 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# OpenAI client will be initialized lazily when needed
+_client = None
+
+def get_openai_client():
+    """Lazy initialization of OpenAI client."""
+    global _client
+    if _client is None:
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY environment variable is required")
+        _client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    return _client
 
 
 @dataclass
@@ -99,7 +108,7 @@ async def parse_mood_description(
         logger.info(f"Parsing mood description: {description[:100]}...")
         
         # Call GPT-4o
-        response = await client.chat.completions.create(
+        response = await get_openai_client().chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": MOOD_PARSING_PROMPT},
