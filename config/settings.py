@@ -12,16 +12,25 @@ if os.path.exists('.env'):
 else:
     print("🚀 Production mode - using Railway environment variables")
 
-# Debug: Print available environment variables
+# Debug: Print available environment variables  
 import time
 print("🔍 Debug - Environment variables (with 3 second delay):")
 time.sleep(3)  # Wait for Railway to fully initialize env vars
-for key in ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY', 'SPOTIPY_CLIENT_ID']:
-    value = os.getenv(key)
-    if value:
-        print(f"  ✅ {key}: {value[:10]}...")
-    else:
-        print(f"  ❌ {key}: NOT FOUND")
+
+print(f"  📱 TELEGRAM_BOT_TOKEN: {'✅ Found' if TELEGRAM_BOT_TOKEN else '❌ Not Found'}")
+if TELEGRAM_BOT_TOKEN:
+    print(f"     Value: {TELEGRAM_BOT_TOKEN[:15]}...")
+    
+print(f"  🧠 OPENAI_API_KEY: {'✅ Found' if OPENAI_API_KEY else '❌ Not Found'}")
+if OPENAI_API_KEY:
+    print(f"     Value: {OPENAI_API_KEY[:15]}...")
+    
+print(f"  🎵 SPOTIPY_CLIENT_ID: {'✅ Found' if os.getenv('SPOTIPY_CLIENT_ID') else '❌ Not Found'}")
+
+# Test actual values after fallback logic
+print("🔧 Variables after fallback resolution:")
+print(f"  Final TELEGRAM_BOT_TOKEN length: {len(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else 0}")
+print(f"  Final OPENAI_API_KEY length: {len(OPENAI_API_KEY) if OPENAI_API_KEY else 0}")
 
 # Also try reading all environment variables to see what's available
 print("🔍 All environment variables available:")
