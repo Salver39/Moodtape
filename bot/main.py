@@ -181,7 +181,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 <div class="icon">{icon}</div>
                 <h1>{title}</h1>
                 <p>{message}</p>
-                <a href="https://t.me/your_bot_username" class="telegram-button">
+                <a href="https://t.me/Mood_TAape_Music_bot" class="telegram-button">
                     🤖 Return to Telegram Bot
                 </a>
                 <div class="footer">
