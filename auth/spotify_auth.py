@@ -401,6 +401,9 @@ class SpotifyClient:
             # Get current user info
             user_info = self.client.current_user()
             
+            # Debug logging
+            logger.info(f"Creating playlist for user {self.user_id}: name='{name}', description='{description[:100]}...', public={public}, tracks={len(track_uris)}")
+            
             # Create playlist
             playlist = self.client.user_playlist_create(
                 user=user_info['id'],
