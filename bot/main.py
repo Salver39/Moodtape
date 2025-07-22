@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -14,7 +15,7 @@ from utils.logger import get_logger
 # Import handlers
 from bot.handlers.start import start_command, service_selection_callback, help_command
 from bot.handlers.mood import mood_message_handler
-from bot.handlers.auth import auth_status_command
+from bot.handlers.auth import auth_status_command, handle_auth_callback
 from bot.handlers.feedback import handle_feedback_callback
 from bot.handlers.preferences import preferences_command, stats_command
 
@@ -25,18 +26,176 @@ from bot.middleware.rate_limiter import rate_limiter
 logger = get_logger(__name__)
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
-    """Simple HTTP handler for health checks."""
+    """HTTP handler for health checks and OAuth callbacks."""
     
     def do_GET(self):
-        """Handle GET requests for health check."""
-        if self.path == "/health" or self.path == "/":
+        """Handle GET requests for health check and OAuth callbacks."""
+        parsed_url = urlparse(self.path)
+        path = parsed_url.path
+        query_params = parse_qs(parsed_url.query)
+        
+        if path == "/health" or path == "/":
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"status": "healthy", "service": "moodtape-bot"}')
+            
+        elif path == "/auth/spotify/callback":
+            self._handle_spotify_callback(query_params)
+            
         else:
             self.send_response(404)
+            self.send_header('Content-type', 'text/html')
             self.end_headers()
+            self.wfile.write(b'<h1>404 Not Found</h1>')
+    
+    def _handle_spotify_callback(self, query_params):
+        """Handle Spotify OAuth callback."""
+        try:
+            # Extract code and state from callback
+            code = query_params.get('code', [None])[0]
+            state = query_params.get('state', [None])[0]
+            error = query_params.get('error', [None])[0]
+            
+            if error:
+                logger.error(f"Spotify OAuth error: {error}")
+                self._send_callback_page(
+                    "❌ Authorization Failed",
+                    f"Error: {error}",
+                    False
+                )
+                return
+            
+            if not code or not state:
+                logger.error("Missing code or state in Spotify callback")
+                self._send_callback_page(
+                    "❌ Authorization Failed",
+                    "Missing authorization code or state parameter.",
+                    False
+                )
+                return
+            
+            # Process the callback asynchronously
+            success = asyncio.run(self._process_spotify_callback(code, state))
+            
+            if success:
+                self._send_callback_page(
+                    "✅ Authorization Successful!",
+                    "You can now return to Telegram and start creating playlists!",
+                    True
+                )
+            else:
+                self._send_callback_page(
+                    "❌ Authorization Failed",
+                    "Failed to process authorization. Please try again.",
+                    False
+                )
+                
+        except Exception as e:
+            logger.error(f"Error handling Spotify callback: {e}")
+            self._send_callback_page(
+                "❌ Authorization Failed", 
+                "An unexpected error occurred.",
+                False
+            )
+    
+    async def _process_spotify_callback(self, code: str, state: str) -> bool:
+        """Process Spotify callback asynchronously."""
+        try:
+            return await handle_auth_callback(code, state)
+        except Exception as e:
+            logger.error(f"Error processing Spotify callback: {e}")
+            return False
+    
+    def _send_callback_page(self, title: str, message: str, success: bool):
+        """Send HTML response page for OAuth callback."""
+        status_color = "#4CAF50" if success else "#f44336"
+        icon = "✅" if success else "❌"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Moodtape - Spotify Authorization</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    margin: 0;
+                    padding: 20px;
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }}
+                .container {{
+                    background: white;
+                    border-radius: 20px;
+                    padding: 40px;
+                    text-align: center;
+                    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                    max-width: 400px;
+                    width: 100%;
+                }}
+                .icon {{
+                    font-size: 60px;
+                    margin-bottom: 20px;
+                }}
+                h1 {{
+                    color: {status_color};
+                    margin-bottom: 20px;
+                    font-size: 24px;
+                }}
+                p {{
+                    color: #666;
+                    line-height: 1.6;
+                    margin-bottom: 30px;
+                    font-size: 16px;
+                }}
+                .telegram-button {{
+                    background: #0088cc;
+                    color: white;
+                    padding: 12px 24px;
+                    border: none;
+                    border-radius: 25px;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-weight: bold;
+                    font-size: 16px;
+                    transition: background 0.3s;
+                }}
+                .telegram-button:hover {{
+                    background: #006ba1;
+                }}
+                .footer {{
+                    margin-top: 30px;
+                    color: #999;
+                    font-size: 14px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">{icon}</div>
+                <h1>{title}</h1>
+                <p>{message}</p>
+                <a href="https://t.me/your_bot_username" class="telegram-button">
+                    🤖 Return to Telegram Bot
+                </a>
+                <div class="footer">
+                    Moodtape - Music that matches your mood
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(html_content.encode('utf-8'))
     
     def log_message(self, format, *args):
         """Suppress HTTP server logs."""
