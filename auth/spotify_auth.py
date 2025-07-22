@@ -401,16 +401,40 @@ class SpotifyClient:
             # Get current user info
             user_info = self.client.current_user()
             
-            # Debug logging
-            logger.info(f"Creating playlist for user {self.user_id}: name='{name}', description='{description[:100]}...', public={public}, tracks={len(track_uris)}")
+            # Sanitize inputs for Spotify API
+            clean_name = name.replace('\n', ' ').replace('\r', ' ').strip()
+            clean_description = description.replace('\n', ' ').replace('\r', ' ').strip()
             
-            # Create playlist
-            playlist = self.client.user_playlist_create(
-                user=user_info['id'],
-                name=name,
-                public=public,
-                description=description
-            )
+            # Additional safety: remove any quotes that might break JSON
+            clean_name = clean_name.replace('"', "'").replace('\t', ' ')
+            clean_description = clean_description.replace('"', "'").replace('\t', ' ')
+            
+            # Debug logging with exact parameters
+            logger.info(f"Creating playlist for user {self.user_id}:")
+            logger.info(f"  user_id: '{user_info['id']}'")
+            logger.info(f"  name: '{clean_name}' (len={len(clean_name)})")
+            logger.info(f"  description: '{clean_description[:150]}...' (len={len(clean_description)})")
+            logger.info(f"  public: {public}")
+            logger.info(f"  tracks_count: {len(track_uris)}")
+            
+            # Create playlist with cleaned parameters
+            try:
+                playlist = self.client.user_playlist_create(
+                    user=user_info['id'],
+                    name=clean_name,
+                    public=public,
+                    description=clean_description
+                )
+            except Exception as desc_error:
+                logger.warning(f"Failed to create playlist with description for user {self.user_id}: {desc_error}")
+                logger.info(f"Trying to create playlist without description...")
+                
+                # Fallback: create playlist without description
+                playlist = self.client.user_playlist_create(
+                    user=user_info['id'],
+                    name=clean_name,
+                    public=public
+                )
             
             # Add tracks to playlist (Spotify API limits to 100 tracks per request)
             chunk_size = 100
