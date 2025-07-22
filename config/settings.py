@@ -4,21 +4,8 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load environment variables from .env file (only for local development)
-# In production (Railway), environment variables are provided directly
-if os.path.exists('.env'):
-    load_dotenv()
-    print("🔧 Loading .env file for local development")
-else:
-    print("🚀 Production mode - using Railway environment variables")
-
-# Quick debug of raw environment variables
-print("🔍 Debug - Raw environment variables:")
-print("🚀 Application starting up...")
-
-for key, value in sorted(os.environ.items()):
-    if any(search_term in key.upper() for search_term in ['TOKEN', 'KEY', 'SPOTIFY', 'TELEGRAM', 'OPENAI']):
-        print(f"  📋 {key}: {str(value)[:15]}...")
+# Load environment variables from .env file (for local development)
+load_dotenv()
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
@@ -43,15 +30,7 @@ OPENAI_API_KEY = (
     os.getenv("GPT_API_KEY")
 )
 
-# Debug: Show final resolved values
-print("🔧 Variables after fallback resolution:")
-print(f"  📱 TELEGRAM_BOT_TOKEN: {'✅ Found' if TELEGRAM_BOT_TOKEN else '❌ Not Found'}")
-if TELEGRAM_BOT_TOKEN:
-    print(f"     Value: {TELEGRAM_BOT_TOKEN[:20]}... (length: {len(TELEGRAM_BOT_TOKEN)})")
-    
-print(f"  🧠 OPENAI_API_KEY: {'✅ Found' if OPENAI_API_KEY else '❌ Not Found'}")
-if OPENAI_API_KEY:
-    print(f"     Value: {OPENAI_API_KEY[:20]}... (length: {len(OPENAI_API_KEY)})")
+
 
 # Проверка критических переменных в runtime, а не при импорте
 def validate_required_env_vars():
