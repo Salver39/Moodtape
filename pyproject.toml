@@ -13,7 +13,7 @@ authors = [
     {name = "Moodtape Team", email = "team@moodtape.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.10"
 license = "MIT"
 classifiers = [
     "Development Status :: 3 - Alpha",

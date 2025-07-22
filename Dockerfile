@@ -1,5 +1,5 @@
-# Use Python 3.12 slim image
-FROM python:3.12-slim
+# Use Python 3.11.9 slim image (stable and compatible with telegram-bot)
+FROM python:3.11.9-slim
 
 # Set working directory
 WORKDIR /app
