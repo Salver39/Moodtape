@@ -7,9 +7,9 @@ from telegram.ext import ContextTypes
 from utils.i18n import get_text, user_sessions
 from utils.logger import get_logger
 from utils.database import db_manager
-from auth.spotify_auth import SpotifyClient
+from auth.spotify_auth import spotify_auth
 from auth.apple_auth import apple_music_client
-from config.settings import ENABLE_SPOTIFY, ENABLE_APPLE_MUSIC
+from config.settings import MUSIC_SERVICES
 
 logger = get_logger(__name__)
 
@@ -34,7 +34,7 @@ async def handle_spotify_auth_request(update: Update, context: ContextTypes.DEFA
     
     try:
         # Check if Spotify is configured
-        if not SpotifyClient.is_configured():
+        if not spotify_auth.is_configured():
             logger.error("Spotify OAuth not configured")
             await query.edit_message_text(
                 get_text("error", user_language)
@@ -42,7 +42,7 @@ async def handle_spotify_auth_request(update: Update, context: ContextTypes.DEFA
             return
         
         # Generate authorization URL
-        auth_url = SpotifyClient.get_auth_url(user.id)
+        auth_url = spotify_auth.get_auth_url(user.id)
         
         # Create inline keyboard with auth URL
         keyboard = [[
@@ -223,7 +223,7 @@ async def handle_auth_callback(code: str, state: str) -> bool:
         user_id = int(state)
         
         # Handle Spotify callback
-        token_info = SpotifyClient.handle_callback(code, state)
+        token_info = spotify_auth.handle_callback(code, state)
         
         if token_info:
             logger.info(f"Successfully authorized user {user_id} for Spotify")
@@ -254,7 +254,7 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     status_lines = []
     
     # Check each service
-    for service_key, service_config in ENABLE_SPOTIFY.items():
+    for service_key, service_config in MUSIC_SERVICES.items():
         if not service_config["enabled"]:
             continue
         
