@@ -80,11 +80,11 @@ class ErrorHandler:
             bool: True if error was handled successfully, False otherwise
         """
         user_id = None
-        user_language = "en"
+        user_language = "ru"
         
         if update and update.effective_user:
             user_id = update.effective_user.id
-            user_language = user_sessions.get_session_data(user_id, "language", "en")
+            user_language = user_sessions.get_session_data(user_id, "language", "ru")
         
         # Log the error
         error_msg = f"Error type: {error_type}"
@@ -189,7 +189,7 @@ class ErrorHandler:
             # Import here to avoid circular imports
             from moodtape_core.gpt_parser import parse_mood_description
             
-            user_language = user_sessions.get_session_data(update.effective_user.id, "language", "en")
+            user_language = user_sessions.get_session_data(update.effective_user.id, "language", "ru")
             
             # Create a simpler mood description
             original_mood = recovery_data.get("mood_description", "")
@@ -237,7 +237,7 @@ class ErrorHandler:
             # Switch user to alternative service
             user_sessions.set_session_data(update.effective_user.id, "music_service", service)
             
-            user_language = user_sessions.get_session_data(update.effective_user.id, "language", "en")
+            user_language = user_sessions.get_session_data(update.effective_user.id, "language", "ru")
             service_name = MUSIC_SERVICES[service]["name"]
             
             fallback_message = {
@@ -318,7 +318,7 @@ class ErrorHandler:
             "es": ["triste", "feliz", "tranquilo", "energético", "romántico", "soñador"]
         }
         
-        keywords = mood_keywords.get(language, mood_keywords["en"])
+        keywords = mood_keywords.get(language, mood_keywords["ru"])
         description_lower = description.lower()
         
         # Find matching keywords
@@ -345,7 +345,7 @@ class ErrorHandler:
         """Send user-friendly error message."""
         
         error_messages = ERROR_CONTEXTS.get(error_type, ERROR_CONTEXTS["general"])
-        message = error_messages.get(language, error_messages["en"])
+        message = error_messages.get(language, error_messages["ru"])
         
         try:
             if update and update.message:

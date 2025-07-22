@@ -100,9 +100,9 @@ class RateLimiter:
             unblock_time = self.blocked_users[user_id]
             if current_time < unblock_time:
                 remaining_time = int(unblock_time - current_time)
-                user_language = "en"
+                user_language = "ru"
                 if update and update.effective_user:
-                    user_language = user_sessions.get_session_data(user_id, "language", "en")
+                    user_language = user_sessions.get_session_data(user_id, "language", "ru")
                 
                 error_message = self._get_blocked_message(remaining_time, user_language)
                 return False, error_message
@@ -139,9 +139,9 @@ class RateLimiter:
         
         if violation_type:
             # Rate limit exceeded
-            user_language = "en"
+            user_language = "ru"
             if update and update.effective_user:
-                user_language = user_sessions.get_session_data(user_id, "language", "en")
+                user_language = user_sessions.get_session_data(user_id, "language", "ru")
             
             # Apply cooldown
             self._apply_cooldown(user_id, limit_config.cooldown_seconds, user_history)

@@ -80,7 +80,7 @@ Important guidelines:
 
 async def parse_mood_description(
     description: str, 
-    user_language: str = "en",
+    user_language: str = "ru",
     user_id: Optional[int] = None,
     use_personalization: bool = True
 ) -> Optional[MoodParameters]:
@@ -182,7 +182,7 @@ def _clamp(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
 
 
-async def get_mood_summary(mood_params: MoodParameters, language: str = "en") -> str:
+async def get_mood_summary(mood_params: MoodParameters, language: str = "ru") -> str:
     """
     Generate a human-readable summary of parsed mood parameters.
     
@@ -238,8 +238,8 @@ async def get_mood_summary(mood_params: MoodParameters, language: str = "en") ->
         return list(desc_dict.values())[-1]  # fallback to last description
     
     lang_descs = {
-        "energy": energy_desc.get(language, energy_desc["en"]),
-        "valence": valence_desc.get(language, valence_desc["en"])
+        "energy": energy_desc.get(language, energy_desc["ru"]),
+        "valence": valence_desc.get(language, valence_desc["ru"])
     }
     
     energy_text = get_description(mood_params.energy, lang_descs["energy"])

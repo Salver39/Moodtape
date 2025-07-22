@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 # Supported languages
 SUPPORTED_LANGUAGES = {"ru", "en", "es"}
-DEFAULT_LANGUAGE = "en"
+DEFAULT_LANGUAGE = "ru"
 
 # Translation dictionaries
 TRANSLATIONS: Dict[str, Dict[str, str]] = {

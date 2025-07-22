@@ -20,7 +20,7 @@ async def preferences_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not user:
         return
     
-    user_language = user_sessions.get_session_data(user.id, "language", "en")
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
     try:
         # Analyze user preferences
@@ -67,7 +67,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not user:
         return
     
-    user_language = user_sessions.get_session_data(user.id, "language", "en")
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
     try:
         # Get user's query history and feedback

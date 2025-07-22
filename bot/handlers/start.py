@@ -27,46 +27,50 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         logger.warning("Received /start command without user information")
         return
     
-    # Determine user language
-    user_language = get_user_language(user.language_code)
+    # Log user start
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
+    logger.info(f"User {user.id} ({user.username or 'N/A'}) started bot with language: {user_language}")
     
-    # Save language to session
-    user_sessions.set_session_data(user.id, "language", user_language)
-    
-    logger.info(f"User {user.id} ({user.username}) started bot with language: {user_language}")
-    
-    # Create inline keyboard for music service selection
-    keyboard = []
-    
-    # Add buttons for enabled music services
-    for service_key, service_config in MUSIC_SERVICES.items():
-        if service_config["enabled"]:
-            button_text = f"{service_config['icon']} {service_config['name']}"
-            keyboard.append([
-                InlineKeyboardButton(
-                    button_text,
-                    callback_data=f"service:{service_key}"
-                )
-            ])
-    
-    # If no services are available, show error
-    if not keyboard:
-        await update.message.reply_text(
-            get_text("error", user_language)
+    try:
+        # First, get the user's language preference from session or detect from Telegram
+        if not user_language or user_language not in {"ru", "en", "es"}:
+            # Auto-detect from Telegram user language
+            user_language = get_user_language(user.language_code or "ru")
+            user_sessions.set_session_data(user.id, "language", user_language)
+        
+        # Show welcome message with service selection
+        welcome_text = get_text("welcome", user_language)
+        
+        keyboard = [
+            [InlineKeyboardButton(
+                get_text("spotify_button", user_language),
+                callback_data="service:spotify"
+            )],
+            [InlineKeyboardButton(
+                get_text("apple_music_button", user_language),
+                callback_data="service:apple_music"
+            )],
+            [InlineKeyboardButton(
+                get_text("language_settings", user_language),
+                callback_data="show_language_menu"
+            )]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=welcome_text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
         )
-        logger.error("No music services are enabled")
-        return
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Send welcome message
-    welcome_text = get_text("welcome", user_language)
-    
-    await update.message.reply_text(
-        welcome_text,
-        reply_markup=reply_markup,
-        parse_mode="HTML"
-    )
+        
+    except Exception as e:
+        logger.error(f"Error in start handler for user {user.id}: {e}")
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=get_text("error", user_language)
+        )
 
 
 async def service_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,7 +111,7 @@ async def service_selection_callback(update: Update, context: ContextTypes.DEFAU
         await check_apple_music_availability(update, context)
     else:
         # For any other services, use the old flow
-        user_language = user_sessions.get_session_data(user.id, "language", "en")
+        user_language = user_sessions.get_session_data(user.id, "language", "ru")
         user_sessions.set_session_data(user.id, "music_service", service_key)
         
         service_name = MUSIC_SERVICES[service_key]["name"]
@@ -130,7 +134,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not user:
         return
     
-    user_language = user_sessions.get_session_data(user.id, "language", "en")
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
     if user_language == "ru":
         help_text = (

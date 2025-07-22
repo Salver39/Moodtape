@@ -31,7 +31,7 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
         # Parse callback data
         _, feedback_type, query_id = query.data.split(":", 2)
         
-        user_language = user_sessions.get_session_data(user.id, "language", "en")
+        user_language = user_sessions.get_session_data(user.id, "language", "ru")
         
         if feedback_type == "comment":
             # Handle comment request
@@ -43,12 +43,12 @@ async def handle_feedback_callback(update: Update, context: ContextTypes.DEFAULT
     except ValueError as e:
         logger.error(f"Invalid feedback callback data: {query.data}")
         await query.edit_message_text(
-            get_text("error", user_sessions.get_session_data(user.id, "language", "en"))
+            get_text("error", user_sessions.get_session_data(user.id, "language", "ru"))
         )
     except Exception as e:
         logger.error(f"Error handling feedback callback: {e}")
         await query.edit_message_text(
-            get_text("error", user_sessions.get_session_data(user.id, "language", "en"))
+            get_text("error", user_sessions.get_session_data(user.id, "language", "ru"))
         )
 
 
@@ -144,7 +144,7 @@ async def handle_comment_message(update: Update, context: ContextTypes.DEFAULT_T
     if not query_id:
         return  # User is not in comment state
     
-    user_language = user_sessions.get_session_data(user.id, "language", "en")
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
     comment_text = message.text.strip()
     
     # Validate comment length

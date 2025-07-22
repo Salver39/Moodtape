@@ -38,7 +38,7 @@ async def mood_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     # Get user session data
-    user_language = user_sessions.get_session_data(user.id, "language", "en")
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
     music_service = user_sessions.get_session_data(user.id, "music_service")
     
     # Check if user has selected a music service
