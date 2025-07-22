@@ -13,13 +13,21 @@ else:
     print("🚀 Production mode - using Railway environment variables")
 
 # Debug: Print available environment variables
-print("🔍 Debug - Environment variables:")
+import time
+print("🔍 Debug - Environment variables (with 3 second delay):")
+time.sleep(3)  # Wait for Railway to fully initialize env vars
 for key in ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY', 'SPOTIPY_CLIENT_ID']:
     value = os.getenv(key)
     if value:
         print(f"  ✅ {key}: {value[:10]}...")
     else:
         print(f"  ❌ {key}: NOT FOUND")
+
+# Also try reading all environment variables to see what's available
+print("🔍 All environment variables available:")
+for key, value in sorted(os.environ.items()):
+    if any(search_term in key.upper() for search_term in ['TOKEN', 'KEY', 'SPOTIFY', 'TELEGRAM', 'OPENAI']):
+        print(f"  📋 {key}: {str(value)[:15]}...")
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
