@@ -1,29 +1,56 @@
 """Main entry point for Moodtape Telegram bot."""
 
 import asyncio
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    CallbackQueryHandler,
-    MessageHandler,
-    filters
-)
+import os
+from pathlib import Path
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL, validate_required_env_vars
 from utils.logger import get_logger
+
+# Import handlers
 from bot.handlers.start import start_command, service_selection_callback, help_command
 from bot.handlers.mood import mood_message_handler
 from bot.handlers.auth import auth_status_command
 from bot.handlers.feedback import handle_feedback_callback
 from bot.handlers.preferences import preferences_command, stats_command
+
+# Import middleware
 from bot.middleware.error_handler import telegram_error_handler
 from bot.middleware.rate_limiter import rate_limiter
 
 logger = get_logger(__name__)
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler for health checks."""
+    
+    def do_GET(self):
+        """Handle GET requests for health check."""
+        if self.path == "/health" or self.path == "/":
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "healthy", "service": "moodtape-bot"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        """Suppress HTTP server logs."""
+        pass
 
-# Error handler is imported from middleware/error_handler.py
-
+def start_health_server():
+    """Start simple HTTP server for health checks."""
+    port = int(os.getenv("PORT", 8000))
+    try:
+        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        logger.info(f"🏥 Health check server started on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"❌ Failed to start health server: {e}")
 
 def main() -> None:
     """Start the bot."""
@@ -35,6 +62,10 @@ def main() -> None:
         logger.error(f"❌ Configuration error: {e}")
         logger.error("Please set the required environment variables and restart the bot")
         return
+    
+    # Start health check server in background thread for Render compatibility
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
     
     # Create application
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
