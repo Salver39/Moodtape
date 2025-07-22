@@ -1,0 +1,51 @@
+# Environment files
+.env
+.env.*
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data directory (contains user data, should not be in image)
+data/
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+README.md
+Docs/
+
+# Tests
+tests/
+.pytest_cache/
+
+# CI/CD
+.github/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log 

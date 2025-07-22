@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  moodtape:
+    build: .
+    container_name: moodtape-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - moodtape-network
+
+  # Optional: Nginx reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    container_name: moodtape-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - moodtape
+    networks:
+      - moodtape-network
+    profiles:
+      - with-nginx
+
+  # Optional: Redis for distributed rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: moodtape-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - moodtape-network
+    profiles:
+      - with-redis
+
+  # Optional: PostgreSQL for production database
+  postgres:
+    image: postgres:15-alpine
+    container_name: moodtape-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=moodtape
+      - POSTGRES_USER=moodtape
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - moodtape-network
+    profiles:
+      - with-postgres
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  moodtape-network:
+    driver: bridge 
