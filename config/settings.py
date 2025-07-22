@@ -34,6 +34,22 @@ def validate_required_env_vars():
     if missing_vars:
         raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
     
+    # Проверяем музыкальные сервисы (не критично для запуска)
+    from utils.logger import get_logger
+    logger = get_logger(__name__)
+    
+    available_services = []
+    if ENABLE_SPOTIFY:
+        available_services.append("Spotify")
+    if ENABLE_APPLE_MUSIC:
+        available_services.append("Apple Music")
+    
+    if not available_services:
+        logger.warning("⚠️  No music services configured. Bot will work but won't be able to create playlists.")
+        logger.warning("📖 Check Docs/railway_setup.md for setup instructions")
+    else:
+        logger.info(f"🎵 Available music services: {', '.join(available_services)}")
+    
     return True
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
@@ -108,7 +124,5 @@ else:
 MUSIC_SERVICES["spotify"]["enabled"] = ENABLE_SPOTIFY
 MUSIC_SERVICES["apple_music"]["enabled"] = ENABLE_APPLE_MUSIC
 
-# Validate at least one service is available
-available_services = [k for k, v in MUSIC_SERVICES.items() if v["enabled"]]
-if not available_services:
-    raise ValueError("At least one music service must be enabled and configured with valid credentials") 
+# Note: Service validation moved to runtime in validate_required_env_vars()
+# This allows bot to start without music services for initial setup 
