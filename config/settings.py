@@ -4,8 +4,22 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file (only for local development)
+# In production (Railway), environment variables are provided directly
+if os.path.exists('.env'):
+    load_dotenv()
+    print("🔧 Loading .env file for local development")
+else:
+    print("🚀 Production mode - using Railway environment variables")
+
+# Debug: Print available environment variables
+print("🔍 Debug - Environment variables:")
+for key in ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY', 'SPOTIPY_CLIENT_ID']:
+    value = os.getenv(key)
+    if value:
+        print(f"  ✅ {key}: {value[:10]}...")
+    else:
+        print(f"  ❌ {key}: NOT FOUND")
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
