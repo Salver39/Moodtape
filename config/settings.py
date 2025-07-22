@@ -13,9 +13,8 @@ else:
     print("🚀 Production mode - using Railway environment variables")
 
 # Quick debug of raw environment variables
-import time
-print("🔍 Debug - Raw environment variables (with 3 second delay):")
-time.sleep(3)  # Wait for Railway to fully initialize env vars
+print("🔍 Debug - Raw environment variables:")
+print("🚀 Application starting up...")
 
 for key, value in sorted(os.environ.items()):
     if any(search_term in key.upper() for search_term in ['TOKEN', 'KEY', 'SPOTIFY', 'TELEGRAM', 'OPENAI']):
