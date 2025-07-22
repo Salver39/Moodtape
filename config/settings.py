@@ -12,28 +12,11 @@ if os.path.exists('.env'):
 else:
     print("🚀 Production mode - using Railway environment variables")
 
-# Debug: Print available environment variables  
+# Quick debug of raw environment variables
 import time
-print("🔍 Debug - Environment variables (with 3 second delay):")
+print("🔍 Debug - Raw environment variables (with 3 second delay):")
 time.sleep(3)  # Wait for Railway to fully initialize env vars
 
-print(f"  📱 TELEGRAM_BOT_TOKEN: {'✅ Found' if TELEGRAM_BOT_TOKEN else '❌ Not Found'}")
-if TELEGRAM_BOT_TOKEN:
-    print(f"     Value: {TELEGRAM_BOT_TOKEN[:15]}...")
-    
-print(f"  🧠 OPENAI_API_KEY: {'✅ Found' if OPENAI_API_KEY else '❌ Not Found'}")
-if OPENAI_API_KEY:
-    print(f"     Value: {OPENAI_API_KEY[:15]}...")
-    
-print(f"  🎵 SPOTIPY_CLIENT_ID: {'✅ Found' if os.getenv('SPOTIPY_CLIENT_ID') else '❌ Not Found'}")
-
-# Test actual values after fallback logic
-print("🔧 Variables after fallback resolution:")
-print(f"  Final TELEGRAM_BOT_TOKEN length: {len(TELEGRAM_BOT_TOKEN) if TELEGRAM_BOT_TOKEN else 0}")
-print(f"  Final OPENAI_API_KEY length: {len(OPENAI_API_KEY) if OPENAI_API_KEY else 0}")
-
-# Also try reading all environment variables to see what's available
-print("🔍 All environment variables available:")
 for key, value in sorted(os.environ.items()):
     if any(search_term in key.upper() for search_term in ['TOKEN', 'KEY', 'SPOTIFY', 'TELEGRAM', 'OPENAI']):
         print(f"  📋 {key}: {str(value)[:15]}...")
@@ -60,6 +43,16 @@ OPENAI_API_KEY = (
     os.getenv("OPENAI_TOKEN") or
     os.getenv("GPT_API_KEY")
 )
+
+# Debug: Show final resolved values
+print("🔧 Variables after fallback resolution:")
+print(f"  📱 TELEGRAM_BOT_TOKEN: {'✅ Found' if TELEGRAM_BOT_TOKEN else '❌ Not Found'}")
+if TELEGRAM_BOT_TOKEN:
+    print(f"     Value: {TELEGRAM_BOT_TOKEN[:20]}... (length: {len(TELEGRAM_BOT_TOKEN)})")
+    
+print(f"  🧠 OPENAI_API_KEY: {'✅ Found' if OPENAI_API_KEY else '❌ Not Found'}")
+if OPENAI_API_KEY:
+    print(f"     Value: {OPENAI_API_KEY[:20]}... (length: {len(OPENAI_API_KEY)})")
 
 # Проверка критических переменных в runtime, а не при импорте
 def validate_required_env_vars():
