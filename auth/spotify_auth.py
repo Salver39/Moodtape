@@ -3,6 +3,7 @@
 import time
 import uuid
 import asyncio
+import random
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlencode
 
@@ -305,7 +306,7 @@ class SpotifyClient:
         limit: int = DEFAULT_PLAYLIST_LENGTH
     ) -> List[Dict[str, Any]]:
         """
-        Search for tracks that match mood parameters.
+        Search for tracks that match mood parameters using multiple discovery strategies.
         
         Args:
             mood_params: Parsed mood parameters
@@ -317,62 +318,116 @@ class SpotifyClient:
         if not self.client:
             return []
         
+        all_tracks = []
+        
         try:
-            # Build search query based on mood
-            search_terms = []
-            
-            # Add genre hints
+            # Strategy 1: Genre-based search with audio features
             if mood_params.genre_hints:
-                search_terms.extend([f"genre:{genre}" for genre in mood_params.genre_hints[:2]])
+                for genre in mood_params.genre_hints[:2]:
+                    search_query = f"genre:{genre}"
+                    logger.info(f"Discovery search 1 - Genre: {search_query}")
+                    
+                    results = self.client.search(q=search_query, type='track', limit=20)
+                    for track in results['tracks']['items'][:10]:  # Take first 10
+                        all_tracks.append({
+                            'id': track['id'],
+                            'name': track['name'],
+                            'artists': [artist['name'] for artist in track['artists']],
+                            'uri': track['uri'],
+                            'audio_features': None,
+                            'discovery_method': f'genre_{genre}'
+                        })
             
-            # Add mood tags as general search terms
-            if mood_params.mood_tags:
-                search_terms.extend(mood_params.mood_tags[:2])
+            # Strategy 2: Mood descriptors search (for discovery)
+            mood_descriptors = []
+            if mood_params.valence > 0.7:
+                mood_descriptors.extend(["uplifting", "optimistic", "bright"])
+            elif mood_params.valence < 0.3:
+                mood_descriptors.extend(["melancholy", "introspective", "contemplative"])
+            else:
+                mood_descriptors.extend(["balanced", "thoughtful", "mellow"])
             
-            # Add time/activity context
-            if mood_params.time_of_day:
-                search_terms.append(mood_params.time_of_day)
+            if mood_params.energy > 0.7:
+                mood_descriptors.extend(["dynamic", "vibrant", "driving"])
+            elif mood_params.energy < 0.3:
+                mood_descriptors.extend(["ambient", "peaceful", "gentle"])
             
-            if mood_params.activity:
-                search_terms.append(mood_params.activity)
+            # Search with mood descriptors
+            for descriptor in mood_descriptors[:2]:
+                logger.info(f"Discovery search 2 - Mood: {descriptor}")
+                results = self.client.search(q=descriptor, type='track', limit=15)
+                for track in results['tracks']['items'][:8]:  # Take 8 from each
+                    all_tracks.append({
+                        'id': track['id'],
+                        'name': track['name'],
+                        'artists': [artist['name'] for artist in track['artists']],
+                        'uri': track['uri'],
+                        'audio_features': None,
+                        'discovery_method': f'mood_{descriptor}'
+                    })
             
-            # If no specific terms, use generic search
-            if not search_terms:
-                if mood_params.valence > 0.7:
-                    search_terms.append("happy")
-                elif mood_params.valence < 0.3:
-                    search_terms.append("sad")
+            # Strategy 3: Activity/context based search
+            if mood_params.activity or mood_params.time_of_day:
+                context_terms = []
+                if mood_params.activity:
+                    context_terms.append(mood_params.activity)
+                if mood_params.time_of_day:
+                    context_terms.append(mood_params.time_of_day)
                 
-                if mood_params.energy > 0.7:
-                    search_terms.append("energetic")
-                elif mood_params.energy < 0.3:
-                    search_terms.append("calm")
+                search_query = " ".join(context_terms[:2])
+                logger.info(f"Discovery search 3 - Context: {search_query}")
+                
+                results = self.client.search(q=search_query, type='track', limit=15)
+                for track in results['tracks']['items'][:10]:
+                    all_tracks.append({
+                        'id': track['id'],
+                        'name': track['name'],
+                        'artists': [artist['name'] for artist in track['artists']],
+                        'uri': track['uri'],
+                        'audio_features': None,
+                        'discovery_method': f'context_{search_query.replace(" ", "_")}'
+                    })
             
-            # Perform search
-            search_query = " ".join(search_terms[:3])  # Limit to avoid too complex queries
-            logger.info(f"Searching Spotify with query: {search_query}")
+            # Strategy 4: Random discovery from similar genres
+            discovery_genres = ["indie rock", "alternative", "dream pop", "folk rock", "indie folk", "electronic", "chillwave"]
+            selected_genre = random.choice(discovery_genres)
+            logger.info(f"Discovery search 4 - Random genre: {selected_genre}")
             
-            results = self.client.search(
-                q=search_query,
-                type='track',
-                limit=min(limit * 2, 50)  # Get more results to filter later
-            )
-            
-            tracks = []
-            for track in results['tracks']['items']:
-                tracks.append({
+            results = self.client.search(q=f"genre:\"{selected_genre}\"", type='track', limit=20)
+            for track in results['tracks']['items'][:12]:
+                all_tracks.append({
                     'id': track['id'],
                     'name': track['name'],
                     'artists': [artist['name'] for artist in track['artists']],
                     'uri': track['uri'],
-                    'audio_features': None
+                    'audio_features': None,
+                    'discovery_method': f'random_{selected_genre.replace(" ", "_")}'
                 })
             
-            logger.info(f"Found {len(tracks)} tracks matching mood search")
-            return tracks[:limit]
+            # Remove duplicates and shuffle for variety
+            seen_ids = set()
+            unique_tracks = []
+            for track in all_tracks:
+                if track['id'] not in seen_ids:
+                    unique_tracks.append(track)
+                    seen_ids.add(track['id'])
+            
+            random.shuffle(unique_tracks)
+            final_tracks = unique_tracks[:limit]
+            
+            logger.info(f"Found {len(final_tracks)} tracks matching mood search (from {len(all_tracks)} total, {len(unique_tracks)} unique)")
+            
+            # Log discovery methods
+            method_counts = {}
+            for track in final_tracks:
+                method = track.get('discovery_method', 'unknown')
+                method_counts[method] = method_counts.get(method, 0) + 1
+            logger.info(f"Discovery methods: {method_counts}")
+            
+            return final_tracks
         
         except SpotifyException as e:
-            logger.error(f"Error searching tracks for user {self.user_id}: {e}")
+            logger.error(f"Error searching tracks by mood for user {self.user_id}: {e}")
             return []
     
     def create_playlist(

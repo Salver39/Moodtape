@@ -191,9 +191,27 @@ class PlaylistBuilder:
     def _get_mood_based_tracks(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """Get tracks that match the mood parameters."""
         if self.service == "spotify" and self.spotify_client:
-            mood_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=limit * 2)
-            logger.info(f"Found {len(mood_tracks)} mood-based tracks for user {self.user_id}")
-            return mood_tracks
+            # Get user's known tracks to exclude them from discovery
+            user_liked_ids = set()
+            try:
+                liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
+                user_liked_ids = {track['id'] for track in liked_tracks}
+                logger.info(f"Excluding {len(user_liked_ids)} user's liked tracks from discovery")
+            except Exception as e:
+                logger.warning(f"Could not get user's liked tracks for filtering: {e}")
+            
+            # Get mood-based tracks
+            mood_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=limit * 3)  # Get more to filter
+            
+            # Filter out tracks user already knows
+            discovery_tracks = []
+            for track in mood_tracks:
+                if track['id'] not in user_liked_ids:
+                    discovery_tracks.append(track)
+            
+            logger.info(f"Found {len(mood_tracks)} mood-based tracks, {len(discovery_tracks)} are new discoveries for user {self.user_id}")
+            return discovery_tracks[:limit * 2]  # Return more than needed for better selection
+            
         elif self.service == "apple_music":
             mood_tracks = apple_music_client.search_tracks_by_mood(mood_params, limit=limit * 2)
             logger.info(f"Found {len(mood_tracks)} Apple Music mood-based tracks for user {self.user_id}")
@@ -258,11 +276,17 @@ class PlaylistBuilder:
         mood_based_tracks = [t for t in all_tracks if t['source'] == 'mood_based']
         
         if user_pref_tracks and mood_based_tracks:
-            # Mixed approach
-            user_count = min(len(user_pref_tracks), int(target_length * 0.6))
+            # Mixed approach - favor discovery when available
+            # 50% user tracks, 50% discovery tracks for better balance
+            user_count = min(len(user_pref_tracks), int(target_length * 0.5))
             mood_count = target_length - user_count
             
-            logger.info(f"Mixed selection: {user_count} user tracks + {mood_count} mood tracks = {target_length} total")
+            # Ensure we have enough mood tracks, adjust if needed
+            if len(mood_based_tracks) < mood_count:
+                mood_count = len(mood_based_tracks)
+                user_count = target_length - mood_count
+            
+            logger.info(f"Balanced selection: {user_count} user tracks + {mood_count} discovery tracks = {user_count + mood_count} total")
             
             selected_tracks = user_pref_tracks[:user_count] + mood_based_tracks[:mood_count]
         elif user_pref_tracks:
@@ -277,13 +301,22 @@ class PlaylistBuilder:
         # Log track details for debugging
         logger.info(f"Final selection details:")
         for i, track in enumerate(selected_tracks[:5]):  # Log first 5 tracks
-            logger.info(f"  {i+1}. '{track['name']}' by {', '.join(track.get('artists', []))} (source: {track['source']})")
+            source = track['source']
+            discovery_method = track.get('discovery_method', 'user_preference')
+            logger.info(f"  {i+1}. '{track['name']}' by {', '.join(track.get('artists', []))} (source: {source}, method: {discovery_method})")
         if len(selected_tracks) > 5:
             logger.info(f"  ... and {len(selected_tracks) - 5} more tracks")
         
+        # Log discovery methods breakdown
+        discovery_methods = {}
+        for track in selected_tracks:
+            method = track.get('discovery_method', 'user_preference')
+            discovery_methods[method] = discovery_methods.get(method, 0) + 1
+        logger.info(f"Discovery methods in final playlist: {discovery_methods}")
+        
         logger.info(f"Selected {len(selected_tracks)} tracks: "
                    f"{len([t for t in selected_tracks if t['source'] == 'user_preference'])} user, "
-                   f"{len([t for t in selected_tracks if t['source'] == 'mood_based'])} mood-based")
+                   f"{len([t for t in selected_tracks if t['source'] == 'mood_based'])} discovery")
         
         return selected_tracks
     
