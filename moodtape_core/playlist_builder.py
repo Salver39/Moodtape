@@ -3,9 +3,10 @@
 import uuid
 import time
 import asyncio
+import random
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import re
 
 from moodtape_core.gpt_parser import MoodParameters
 from auth.spotify_auth import SpotifyClient
@@ -155,16 +156,35 @@ class PlaylistBuilder:
     def _get_user_preference_tracks(self) -> List[Dict[str, Any]]:
         """Get user's preferred tracks from their listening history."""
         if self.service == "spotify" and self.spotify_client:
-            # Try to get liked tracks first
-            liked_tracks = self.spotify_client.get_user_liked_tracks(limit=30)
-            if liked_tracks:
-                logger.info(f"Found {len(liked_tracks)} liked tracks for user {self.user_id}")
-                return liked_tracks
+            all_user_tracks = []
             
-            # Fallback to top tracks
-            top_tracks = self.spotify_client.get_user_top_tracks(limit=30)
-            logger.info(f"Found {len(top_tracks)} top tracks for user {self.user_id}")
-            return top_tracks
+            # Get a mix of liked tracks and top tracks for better variety
+            # Try to get liked tracks first (recent additions)
+            liked_tracks = self.spotify_client.get_user_liked_tracks(limit=20)
+            if liked_tracks:
+                all_user_tracks.extend(liked_tracks)
+                logger.info(f"Found {len(liked_tracks)} liked tracks for user {self.user_id}")
+            
+            # Add top tracks from different time periods for variety
+            for time_range in ["short_term", "medium_term", "long_term"]:
+                top_tracks = self.spotify_client.get_user_top_tracks(time_range=time_range, limit=10)
+                all_user_tracks.extend(top_tracks)
+                logger.info(f"Found {len(top_tracks)} {time_range} top tracks for user {self.user_id}")
+            
+            # Remove duplicates while preserving order
+            seen_ids = set()
+            unique_tracks = []
+            for track in all_user_tracks:
+                if track['id'] not in seen_ids:
+                    unique_tracks.append(track)
+                    seen_ids.add(track['id'])
+            
+            # Shuffle to avoid only recent tracks and limit to reasonable number
+            random.shuffle(unique_tracks)
+            final_tracks = unique_tracks[:30]  # Keep max 30 for balance
+            
+            logger.info(f"Final user track selection: {len(final_tracks)} tracks (from {len(all_user_tracks)} total)")
+            return final_tracks
         
         return []
     
@@ -204,6 +224,8 @@ class PlaylistBuilder:
         seen_ids = set()
         all_tracks = []
         
+        logger.info(f"Starting track combination: {len(user_tracks)} user tracks, {len(mood_tracks)} mood tracks")
+        
         # Add user tracks first (they get priority)
         for track in user_tracks:
             if track['id'] not in seen_ids:
@@ -211,6 +233,8 @@ class PlaylistBuilder:
                 track['score'] = 1.0  # High score for user preferences
                 all_tracks.append(track)
                 seen_ids.add(track['id'])
+        
+        logger.info(f"Added {len([t for t in all_tracks if t['source'] == 'user_preference'])} unique user tracks")
         
         # Add mood tracks
         for track in mood_tracks:
@@ -220,8 +244,12 @@ class PlaylistBuilder:
                 all_tracks.append(track)
                 seen_ids.add(track['id'])
         
+        logger.info(f"Added {len([t for t in all_tracks if t['source'] == 'mood_based'])} unique mood tracks")
+        logger.info(f"Total unique tracks available: {len(all_tracks)}")
+        
         # If we don't have enough tracks, return what we have
         if len(all_tracks) <= target_length:
+            logger.info(f"Not enough tracks ({len(all_tracks)} <= {target_length}), returning all available")
             return all_tracks
         
         # Select tracks with a mix of user preferences and mood matching
@@ -234,13 +262,24 @@ class PlaylistBuilder:
             user_count = min(len(user_pref_tracks), int(target_length * 0.6))
             mood_count = target_length - user_count
             
+            logger.info(f"Mixed selection: {user_count} user tracks + {mood_count} mood tracks = {target_length} total")
+            
             selected_tracks = user_pref_tracks[:user_count] + mood_based_tracks[:mood_count]
         elif user_pref_tracks:
             # Only user preferences available
+            logger.info(f"Only user tracks available: selecting {min(len(user_pref_tracks), target_length)} tracks")
             selected_tracks = user_pref_tracks[:target_length]
         else:
             # Only mood-based tracks available
+            logger.info(f"Only mood tracks available: selecting {min(len(mood_based_tracks), target_length)} tracks")
             selected_tracks = mood_based_tracks[:target_length]
+        
+        # Log track details for debugging
+        logger.info(f"Final selection details:")
+        for i, track in enumerate(selected_tracks[:5]):  # Log first 5 tracks
+            logger.info(f"  {i+1}. '{track['name']}' by {', '.join(track.get('artists', []))} (source: {track['source']})")
+        if len(selected_tracks) > 5:
+            logger.info(f"  ... and {len(selected_tracks) - 5} more tracks")
         
         logger.info(f"Selected {len(selected_tracks)} tracks: "
                    f"{len([t for t in selected_tracks if t['source'] == 'user_preference'])} user, "

@@ -438,11 +438,20 @@ class SpotifyClient:
             
             # Add tracks to playlist (Spotify API limits to 100 tracks per request)
             chunk_size = 100
+            added_tracks_count = 0
+            
+            logger.info(f"Adding {len(track_uris)} tracks to playlist '{clean_name}'...")
+            
             for i in range(0, len(track_uris), chunk_size):
                 chunk = track_uris[i:i + chunk_size]
-                self.client.playlist_add_items(playlist['id'], chunk)
+                try:
+                    result = self.client.playlist_add_items(playlist['id'], chunk)
+                    added_tracks_count += len(chunk)
+                    logger.info(f"Added chunk {i//chunk_size + 1}: {len(chunk)} tracks (total: {added_tracks_count})")
+                except Exception as chunk_error:
+                    logger.error(f"Failed to add chunk {i//chunk_size + 1} with {len(chunk)} tracks: {chunk_error}")
             
-            logger.info(f"Created playlist '{name}' with {len(track_uris)} tracks for user {self.user_id}")
+            logger.info(f"Created playlist '{clean_name}' with {added_tracks_count}/{len(track_uris)} tracks for user {self.user_id}")
             
             return {
                 'id': playlist['id'],
