@@ -1,7 +1,7 @@
 """Rate limiting middleware for production bot."""
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 from dataclasses import dataclass
 from telegram import Update
@@ -42,6 +42,10 @@ class RateLimiter:
         self.user_histories: Dict[int, UserRequestHistory] = {}
         self.blocked_users: Dict[int, float] = {}  # user_id -> unblock_time
         
+        # Access control lists
+        self.whitelist: set = set()  # Users exempt from rate limiting
+        self.blacklist: set = set()  # Users with stricter limits
+        
         # Rate limits for different operations
         self.limits = {
             "playlist_creation": RateLimit(
@@ -67,6 +71,34 @@ class RateLimiter:
                 requests_per_hour=60,
                 requests_per_day=300,
                 cooldown_seconds=60  # 1 minute
+            )
+        }
+        
+        # Blacklist users get stricter limits (half of normal)
+        self.blacklist_limits = {
+            "playlist_creation": RateLimit(
+                requests_per_minute=1,
+                requests_per_hour=7,
+                requests_per_day=25,
+                cooldown_seconds=600  # 10 minutes
+            ),
+            "mood_parsing": RateLimit(
+                requests_per_minute=2,
+                requests_per_hour=15,
+                requests_per_day=50,
+                cooldown_seconds=120  # 2 minutes
+            ),
+            "feedback": RateLimit(
+                requests_per_minute=5,
+                requests_per_hour=25,
+                requests_per_day=100,
+                cooldown_seconds=60  # 1 minute
+            ),
+            "general": RateLimit(
+                requests_per_minute=5,
+                requests_per_hour=30,
+                requests_per_day=150,
+                cooldown_seconds=120  # 2 minutes
             )
         }
         
@@ -110,6 +142,16 @@ class RateLimiter:
                 # Remove expired block
                 del self.blocked_users[user_id]
         
+        # Check if user is whitelisted
+        if user_id in self.whitelist:
+            return True, None
+        
+        # Check if user is blacklisted
+        if user_id in self.blacklist:
+            limit_config = self.blacklist_limits.get(operation, self.blacklist_limits["general"])
+        else:
+            limit_config = self.limits.get(operation, self.limits["general"])
+        
         # Get or create user history
         if user_id not in self.user_histories:
             self.user_histories[user_id] = UserRequestHistory(
@@ -120,7 +162,6 @@ class RateLimiter:
             )
         
         user_history = self.user_histories[user_id]
-        limit_config = self.limits.get(operation, self.limits["general"])
         
         # Apply premium multiplier if user is premium
         if user_id in self.premium_users:
@@ -175,6 +216,154 @@ class RateLimiter:
         user_history.day_requests.append(current_time)
         
         return True, None
+    
+    # Administrative methods
+    
+    def add_to_whitelist(self, user_id: int) -> None:
+        """Add user to whitelist (exempt from rate limiting)."""
+        self.whitelist.add(user_id)
+        # Remove from blacklist if present
+        self.blacklist.discard(user_id)
+        self.logger.info(f"Added user {user_id} to whitelist")
+    
+    def remove_from_whitelist(self, user_id: int) -> None:
+        """Remove user from whitelist."""
+        self.whitelist.discard(user_id)
+        self.logger.info(f"Removed user {user_id} from whitelist")
+    
+    def add_to_blacklist(self, user_id: int) -> None:
+        """Add user to blacklist (stricter rate limits)."""
+        self.blacklist.add(user_id)
+        # Remove from whitelist if present
+        self.whitelist.discard(user_id)
+        self.logger.info(f"Added user {user_id} to blacklist")
+    
+    def remove_from_blacklist(self, user_id: int) -> None:
+        """Remove user from blacklist."""
+        self.blacklist.discard(user_id)
+        self.logger.info(f"Removed user {user_id} from blacklist")
+    
+    def add_premium_user(self, user_id: int) -> None:
+        """Add user to premium list (higher limits)."""
+        self.premium_users.add(user_id)
+        self.logger.info(f"Added user {user_id} to premium users")
+    
+    def remove_premium_user(self, user_id: int) -> None:
+        """Remove user from premium list."""
+        self.premium_users.discard(user_id)
+        self.logger.info(f"Removed user {user_id} from premium users")
+    
+    def unblock_user(self, user_id: int) -> bool:
+        """
+        Manually unblock a user.
+        
+        Returns:
+            True if user was blocked and is now unblocked, False if user wasn't blocked
+        """
+        if user_id in self.blocked_users:
+            del self.blocked_users[user_id]
+            self.logger.info(f"Manually unblocked user {user_id}")
+            return True
+        return False
+    
+    def get_user_status(self, user_id: int) -> Dict[str, Any]:
+        """
+        Get comprehensive status for a user.
+        
+        Returns:
+            Dictionary with user's rate limit status
+        """
+        current_time = time.time()
+        
+        status = {
+            'user_id': user_id,
+            'is_whitelisted': user_id in self.whitelist,
+            'is_blacklisted': user_id in self.blacklist,
+            'is_premium': user_id in self.premium_users,
+            'is_blocked': user_id in self.blocked_users,
+            'blocked_until': None,
+            'request_history': None,
+            'total_violations': 0
+        }
+        
+        if user_id in self.blocked_users:
+            unblock_time = self.blocked_users[user_id]
+            status['blocked_until'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(unblock_time))
+            status['seconds_remaining'] = max(0, int(unblock_time - current_time))
+        
+        if user_id in self.user_histories:
+            history = self.user_histories[user_id]
+            status['request_history'] = {
+                'minute_requests': len(history.minute_requests),
+                'hour_requests': len(history.hour_requests),
+                'day_requests': len(history.day_requests),
+                'total_violations': history.total_violations,
+                'last_warning_time': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(history.last_warning_time)) if history.last_warning_time else None
+            }
+            status['total_violations'] = history.total_violations
+        
+        return status
+    
+    def get_blocked_users(self) -> List[Dict[str, Any]]:
+        """Get list of currently blocked users."""
+        current_time = time.time()
+        blocked = []
+        
+        for user_id, unblock_time in self.blocked_users.items():
+            blocked.append({
+                'user_id': user_id,
+                'blocked_until': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(unblock_time)),
+                'seconds_remaining': max(0, int(unblock_time - current_time))
+            })
+        
+        return sorted(blocked, key=lambda x: x['seconds_remaining'])
+    
+    def get_rate_limiter_stats(self) -> Dict[str, Any]:
+        """Get overall rate limiter statistics."""
+        current_time = time.time()
+        
+        # Count active histories
+        active_minute = 0
+        active_hour = 0
+        active_day = 0
+        total_violations = 0
+        
+        for history in self.user_histories.values():
+            # Clean old requests for accurate counting
+            history.minute_requests = [t for t in history.minute_requests if current_time - t < 60]
+            history.hour_requests = [t for t in history.hour_requests if current_time - t < 3600]
+            history.day_requests = [t for t in history.day_requests if current_time - t < 86400]
+            
+            if history.minute_requests:
+                active_minute += 1
+            if history.hour_requests:
+                active_hour += 1
+            if history.day_requests:
+                active_day += 1
+            
+            total_violations += history.total_violations
+        
+        return {
+            'total_users_tracked': len(self.user_histories),
+            'blocked_users_count': len(self.blocked_users),
+            'whitelisted_users_count': len(self.whitelist),
+            'blacklisted_users_count': len(self.blacklist),
+            'premium_users_count': len(self.premium_users),
+            'active_users': {
+                'last_minute': active_minute,
+                'last_hour': active_hour,
+                'last_day': active_day
+            },
+            'total_violations_tracked': total_violations
+        }
+    
+    def cleanup_old_violations(self) -> None:
+        """Clean up old rate limit violations from database."""
+        try:
+            deleted_count = db_manager.cleanup_old_rate_limit_violations(days_to_keep=30)
+            self.logger.info(f"Rate limiter cleanup: removed {deleted_count} old violations")
+        except Exception as e:
+            self.logger.error(f"Error during rate limiter cleanup: {e}")
     
     def _clean_old_requests(self, user_history: UserRequestHistory, current_time: float) -> None:
         """Remove old requests from history."""
@@ -280,16 +469,6 @@ class RateLimiter:
             return f"🚫 Estás temporalmente bloqueado por exceder límites. Restante: {remaining_time}"
         else:
             return f"🚫 You are temporarily blocked for exceeding limits. Remaining: {remaining_time}"
-    
-    def add_premium_user(self, user_id: int) -> None:
-        """Add user to premium list."""
-        self.premium_users.add(user_id)
-        self.logger.info(f"Added premium user: {user_id}")
-    
-    def remove_premium_user(self, user_id: int) -> None:
-        """Remove user from premium list."""
-        self.premium_users.discard(user_id)
-        self.logger.info(f"Removed premium user: {user_id}")
     
     def get_user_stats(self, user_id: int) -> Dict[str, int]:
         """Get user's current request statistics."""

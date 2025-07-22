@@ -18,6 +18,14 @@ from bot.handlers.mood import mood_message_handler
 from bot.handlers.auth import auth_status_command, handle_auth_callback
 from bot.handlers.feedback import handle_feedback_callback
 from bot.handlers.preferences import preferences_command, stats_command
+from bot.handlers.admin import (
+    admin_rate_limit_stats,
+    admin_blocked_users,
+    admin_user_status,
+    admin_violations_history,
+    admin_cleanup_old_data,
+    handle_admin_callback
+)
 
 # Import middleware
 from bot.middleware.error_handler import telegram_error_handler
@@ -238,6 +246,13 @@ def main() -> None:
     application.add_handler(CommandHandler("preferences", preferences_command))
     application.add_handler(CommandHandler("stats", stats_command))
     
+    # Admin commands
+    application.add_handler(CommandHandler("admin_stats", admin_rate_limit_stats))
+    application.add_handler(CommandHandler("admin_blocked", admin_blocked_users))
+    application.add_handler(CommandHandler("admin_user", admin_user_status))
+    application.add_handler(CommandHandler("admin_violations", admin_violations_history))
+    application.add_handler(CommandHandler("admin_cleanup", admin_cleanup_old_data))
+    
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(
         service_selection_callback, 
@@ -246,6 +261,10 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(
         handle_feedback_callback,
         pattern=r"^feedback:"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        handle_admin_callback,
+        pattern=r"^admin_"
     ))
     
     # Message handlers (for mood descriptions)
@@ -261,6 +280,7 @@ def main() -> None:
     async def cleanup_rate_limiter(context):
         """Periodic cleanup of rate limiter data."""
         rate_limiter.cleanup_old_data()
+        rate_limiter.cleanup_old_violations()
     
     # Add cleanup job (every 6 hours)
     job_queue = application.job_queue

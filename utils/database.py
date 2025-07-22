@@ -6,10 +6,16 @@ import time
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-from config.settings import DATA_DIR, TOKENS_DB_PATH, FEEDBACK_DB_PATH, QUERY_LOG_DB_PATH
+from config.settings import DATA_DIR
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Database paths
+TOKENS_DB_PATH = DATA_DIR / "tokens.sqlite"
+FEEDBACK_DB_PATH = DATA_DIR / "feedback.sqlite" 
+QUERY_LOG_DB_PATH = DATA_DIR / "query_log.sqlite"
+RATE_LIMIT_DB_PATH = DATA_DIR / "rate_limits.sqlite"
 
 
 class DatabaseManager:
@@ -24,6 +30,7 @@ class DatabaseManager:
         self._init_tokens_db()
         self._init_feedback_db()
         self._init_query_log_db()
+        self._init_rate_limit_db()
     
     def _init_tokens_db(self):
         """Initialize tokens database."""
@@ -79,6 +86,22 @@ class DatabaseManager:
             """)
             conn.commit()
         logger.info("Query log database initialized")
+
+    def _init_rate_limit_db(self):
+        """Initialize rate limit violations database."""
+        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS rate_limit_violations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    operation TEXT NOT NULL,
+                    violation_type TEXT NOT NULL,
+                    cooldown_seconds INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            conn.commit()
+        logger.info("Rate limit violations database initialized")
     
     # Token management methods
     def save_user_token(
@@ -240,6 +263,170 @@ class DatabaseManager:
                 query_list.append(query)
             
             return query_list
+    
+    def log_rate_limit_violation(
+        self,
+        user_id: int,
+        operation: str,
+        violation_type: str,
+        cooldown_seconds: int
+    ) -> None:
+        """
+        Log a rate limit violation.
+        
+        Args:
+            user_id: ID of the user who violated rate limit
+            operation: Type of operation (e.g., 'playlist_creation')
+            violation_type: Type of violation (e.g., 'per_minute', 'per_hour')
+            cooldown_seconds: Cooldown period applied
+        """
+        current_time = int(time.time())
+        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+            conn.execute("""
+                INSERT INTO rate_limit_violations 
+                (user_id, operation, violation_type, cooldown_seconds, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, operation, violation_type, cooldown_seconds, current_time))
+            conn.commit()
+        logger.warning(
+            f"Rate limit violation logged: user={user_id}, operation={operation}, "
+            f"violation={violation_type}, cooldown={cooldown_seconds}s"
+        )
+    
+    def get_rate_limit_violations(
+        self,
+        user_id: Optional[int] = None,
+        operation: Optional[str] = None,
+        hours_back: int = 24,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get rate limit violations with optional filtering.
+        
+        Args:
+            user_id: Filter by specific user (optional)
+            operation: Filter by operation type (optional)
+            hours_back: How many hours back to look
+            limit: Maximum number of results
+            
+        Returns:
+            List of violation records
+        """
+        cutoff_time = int(time.time()) - (hours_back * 3600)
+        
+        query = """
+            SELECT id, user_id, operation, violation_type, cooldown_seconds, created_at
+            FROM rate_limit_violations 
+            WHERE created_at >= ?
+        """
+        params = [cutoff_time]
+        
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+            
+        if operation:
+            query += " AND operation = ?"
+            params.append(operation)
+            
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        
+        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(query, params)
+            
+            violations = []
+            for row in cursor.fetchall():
+                violations.append({
+                    'id': row['id'],
+                    'user_id': row['user_id'],
+                    'operation': row['operation'],
+                    'violation_type': row['violation_type'],
+                    'cooldown_seconds': row['cooldown_seconds'],
+                    'created_at': row['created_at'],
+                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(row['created_at']))
+                })
+            
+            return violations
+    
+    def get_rate_limit_stats(self, hours_back: int = 24) -> Dict[str, Any]:
+        """
+        Get rate limit violation statistics.
+        
+        Args:
+            hours_back: How many hours back to analyze
+            
+        Returns:
+            Dictionary with statistics
+        """
+        cutoff_time = int(time.time()) - (hours_back * 3600)
+        
+        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+            # Total violations
+            total_violations = conn.execute(
+                "SELECT COUNT(*) FROM rate_limit_violations WHERE created_at >= ?",
+                (cutoff_time,)
+            ).fetchone()[0]
+            
+            # Violations by operation
+            operation_stats = conn.execute("""
+                SELECT operation, COUNT(*) as count
+                FROM rate_limit_violations 
+                WHERE created_at >= ?
+                GROUP BY operation
+                ORDER BY count DESC
+            """, (cutoff_time,)).fetchall()
+            
+            # Violations by user (top violators)
+            user_stats = conn.execute("""
+                SELECT user_id, COUNT(*) as count
+                FROM rate_limit_violations 
+                WHERE created_at >= ?
+                GROUP BY user_id
+                ORDER BY count DESC
+                LIMIT 10
+            """, (cutoff_time,)).fetchall()
+            
+            # Violations by type
+            type_stats = conn.execute("""
+                SELECT violation_type, COUNT(*) as count
+                FROM rate_limit_violations 
+                WHERE created_at >= ?
+                GROUP BY violation_type
+                ORDER BY count DESC
+            """, (cutoff_time,)).fetchall()
+            
+            return {
+                'total_violations': total_violations,
+                'hours_analyzed': hours_back,
+                'operations': [{'operation': row[0], 'count': row[1]} for row in operation_stats],
+                'top_violators': [{'user_id': row[0], 'count': row[1]} for row in user_stats],
+                'violation_types': [{'type': row[0], 'count': row[1]} for row in type_stats]
+            }
+    
+    def cleanup_old_rate_limit_violations(self, days_to_keep: int = 30) -> int:
+        """
+        Clean up old rate limit violations.
+        
+        Args:
+            days_to_keep: How many days of data to keep
+            
+        Returns:
+            Number of records deleted
+        """
+        cutoff_time = int(time.time()) - (days_to_keep * 24 * 3600)
+        
+        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+            cursor = conn.execute(
+                "DELETE FROM rate_limit_violations WHERE created_at < ?",
+                (cutoff_time,)
+            )
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+        logger.info(f"Cleaned up {deleted_count} old rate limit violations (older than {days_to_keep} days)")
+        return deleted_count
 
 
 # Global database manager instance
