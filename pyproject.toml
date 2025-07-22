@@ -23,14 +23,14 @@ classifiers = [
 ]
 
 dependencies = [
-    "python-telegram-bot[job-queue]>=20.0",
-    "openai>=1.0.0",
-    "spotipy>=2.22.0", 
-    "requests>=2.31.0",
-    "python-dotenv>=1.0.0",
-    "PyJWT>=2.8.0",
-    "cryptography>=41.0.0",
-    "APScheduler>=3.10.0",  # Required for job-queue
+    "python-telegram-bot[job-queue]==20.7",
+    "openai==1.35.8",
+    "spotipy==2.23.0",
+    "requests==2.31.0",
+    "python-dotenv==1.0.0",
+    "PyJWT==2.8.0",
+    "cryptography==42.0.8",
+    "APScheduler==3.10.4",
 ]
 
 [project.optional-dependencies]

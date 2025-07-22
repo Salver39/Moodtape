@@ -1,7 +1,7 @@
 """Apple Music API integration for Moodtape bot."""
 
 import time
-import jwt
+import jwt as PyJWT
 import requests
 from pathlib import Path
 from typing import Optional, Dict, List, Any
@@ -98,7 +98,7 @@ class AppleMusicAuth:
             }
             
             # Generate JWT token
-            token = jwt.encode(
+            token = PyJWT.encode(
                 payload=payload,
                 key=self.private_key,
                 algorithm='ES256',
