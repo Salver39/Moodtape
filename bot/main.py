@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+import signal
+import sys
 from pathlib import Path
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -35,10 +37,28 @@ logger = get_logger(__name__)
 
 # Global application instance
 _application = None
+_shutdown_event = asyncio.Event()
 
 def get_application():
     """Get the global application instance."""
     return _application
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
+    _shutdown_event.set()
+    
+    # Give some time for cleanup before force exit
+    if _application:
+        try:
+            # Stop the application gracefully
+            asyncio.create_task(_application.stop())
+            asyncio.create_task(_application.shutdown())
+        except Exception as e:
+            logger.error(f"Error during graceful shutdown: {e}")
+    
+    logger.info("👋 Goodbye!")
+    sys.exit(0)
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     """HTTP handler for health checks and OAuth callbacks."""
@@ -228,6 +248,10 @@ def start_health_server():
 
 def main() -> None:
     """Start the bot."""
+    # Setup signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     # Validate required environment variables
     try:
         validate_required_env_vars()
@@ -241,9 +265,14 @@ def main() -> None:
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
     
-    # Create application
+    # Create application with better error handling
     global _application
-    _application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    try:
+        _application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        logger.info("✅ Telegram application created successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to create Telegram application: {e}")
+        return
     
     # Add handlers
     
@@ -296,29 +325,73 @@ def main() -> None:
         job_queue.run_repeating(cleanup_rate_limiter, interval=21600, first=60)  # 6 hours
         logger.info("Rate limiter cleanup job scheduled")
     
-    logger.info("Moodtape bot starting...")
+    logger.info("🚀 Moodtape bot starting...")
     
-    # TEMPORARY FIX: Use polling in production to avoid Render.com deployment conflicts
-    # Render's zero-downtime deployment causes multiple bot instances during deploy
-    # which triggers "terminated by other getUpdates request" errors
+    # RENDER.COM MULTIPLE INSTANCE FIX:
+    # Zero-downtime deployments on Render can cause multiple bot instances
+    # We use aggressive polling settings and better error handling
     
-    # NOTE: Webhook clearing removed due to Telegram flood control
-    # The polling mode with drop_pending_updates=True will handle old updates
-    
-    # ALWAYS use polling (safer for Render.com deployment)
-    logger.info("Starting bot with polling (safer for Render deployments)")
-    _application.run_polling(
-        poll_interval=1.0,
-        timeout=30,
-        drop_pending_updates=True
-    )
+    try:
+        logger.info("🔄 Starting bot with polling (multiple instance protection)")
+        _application.run_polling(
+            poll_interval=2.0,          # Увеличил интервал для снижения нагрузки
+            timeout=20,                 # Уменьшил timeout для быстрого обнаружения конфликтов
+            drop_pending_updates=True,  # Агрессивная очистка старых updates
+            stop_signals=None,          # Отключаем стандартные сигналы, используем свои
+            close_loop=False            # Не закрываем loop автоматически
+        )
+    except Exception as e:
+        error_str = str(e).lower()
+        if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
+            logger.error("🚨 MULTIPLE BOT INSTANCES DETECTED!")
+            logger.error("💡 This is likely due to Render.com zero-downtime deployment")
+            logger.error("⏳ Waiting for old instance to terminate...")
+            
+            # Wait for old instance to die, then retry
+            import time
+            time.sleep(10)
+            
+            try:
+                logger.info("🔄 Retrying bot startup after conflict resolution...")
+                _application.run_polling(
+                    poll_interval=3.0,
+                    timeout=15,
+                    drop_pending_updates=True,
+                    stop_signals=None,
+                    close_loop=False
+                )
+            except Exception as retry_error:
+                logger.error(f"❌ Failed to start bot after retry: {retry_error}")
+                raise
+        else:
+            logger.error(f"❌ Unexpected error starting bot: {e}")
+            raise
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        logger.info("👋 Bot stopped by user (Ctrl+C)")
+    except SystemExit:
+        logger.info("👋 Bot stopped by system signal")
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        raise 
+        error_str = str(e).lower()
+        if "conflict" in error_str and "getUpdates" in error_str:
+            logger.error("🚨 CRITICAL: Multiple bot instances detected!")
+            logger.error("🔧 SOLUTION: Check your deployment platform for running instances")
+            logger.error("   - Render.com: Check dashboard for multiple deploys")
+            logger.error("   - Docker: Check for running containers")
+            logger.error("   - Local: Check for other terminal sessions")
+        else:
+            logger.error(f"💥 Fatal error: {e}")
+        
+        # Clean shutdown
+        if _application:
+            try:
+                asyncio.run(_application.stop())
+                asyncio.run(_application.shutdown())
+            except:
+                pass
+        
+        sys.exit(1) 

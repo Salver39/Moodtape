@@ -43,6 +43,11 @@ ERROR_CONTEXTS = {
         "en": "⏱️ Rate limit reached. Please try again in a few minutes.",
         "es": "⏱️ Límite de solicitudes alcanzado. Inténtalo en unos minutos."
     },
+    "bot_conflict": {
+        "ru": "🔄 Бот перезапускается для обновления. Попробуйте снова через несколько секунд.",
+        "en": "🔄 Bot is restarting for updates. Please try again in a few seconds.",
+        "es": "🔄 El bot se está reiniciando. Inténtalo de nuevo en unos segundos."
+    },
     "general": {
         "ru": "❌ Произошла техническая ошибка. Попробуйте позже или обратитесь в поддержку.",
         "en": "❌ Technical error occurred. Please try later or contact support.",
@@ -374,8 +379,8 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
     if context.error:
         error_type = "general"
         
-        # Classify error type
-        error_str = str(context.error).lower()
+        # Classify error type - FIX: проверяем что error не None
+        error_str = str(context.error).lower() if context.error else ""
         
         if "openai" in error_str or "gpt" in error_str:
             error_type = "mood_parsing"
@@ -389,6 +394,8 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
             error_type = "api_limit"
         elif "timeout" in error_str or "network" in error_str:
             error_type = "network_timeout"
+        elif "conflict" in error_str and "getUpdates" in error_str:
+            error_type = "bot_conflict"  # Новый тип ошибки для конфликтов ботов
         
         # Handle the error
         await error_handler.handle_error(
@@ -396,4 +403,13 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
             context=context,
             error_type=error_type,
             original_error=context.error
+        )
+    else:
+        # Если нет ошибки в контексте, логируем как общую ошибку
+        logger.warning("telegram_error_handler called without context.error")
+        await error_handler.handle_error(
+            update=update if isinstance(update, Update) else None,
+            context=context,
+            error_type="general",
+            original_error=None
         ) 
