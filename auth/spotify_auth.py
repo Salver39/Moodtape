@@ -525,25 +525,39 @@ class SpotifyClient:
             logger.info(f"  public: {public}")
             logger.info(f"  tracks_count: {len(track_uris)}")
             
-            # Create playlist with cleaned parameters
+            # Create playlist with cleaned parameters using direct API call
             try:
-                # Create playlist for the user (using their user_id)
-                playlist = self.client.user_playlist_create(
-                    user=self.user_id,
-                    name=clean_name,
-                    public=public,
-                    description=clean_description
-                )
+                # Use /me/playlists endpoint to create playlist for current user
+                url = "https://api.spotify.com/v1/me/playlists"
+                payload = {
+                    "name": clean_name,
+                    "public": public,
+                    "description": clean_description
+                }
+                headers = {"Authorization": f"Bearer {self.client.auth_manager.get_access_token()['access_token']}"}
+                response = self.client._session.post(url, json=payload, headers=headers)
+                
+                if response.status_code == 201:
+                    playlist = response.json()
+                else:
+                    raise Exception(f"HTTP {response.status_code}: {response.text}")
             except Exception as desc_error:
                 logger.warning(f"Failed to create playlist with description for user {self.user_id}: {desc_error}")
                 logger.info(f"Trying to create playlist without description...")
                 
-                # Fallback: create playlist without description
-                playlist = self.client.user_playlist_create(
-                    user=self.user_id,
-                    name=clean_name,
-                    public=public
-                )
+                # Fallback: create playlist without description using direct API call
+                url = "https://api.spotify.com/v1/me/playlists"
+                payload = {
+                    "name": clean_name,
+                    "public": public
+                }
+                headers = {"Authorization": f"Bearer {self.client.auth_manager.get_access_token()['access_token']}"}
+                response = self.client._session.post(url, json=payload, headers=headers)
+                
+                if response.status_code == 201:
+                    playlist = response.json()
+                else:
+                    raise Exception(f"HTTP {response.status_code}: {response.text}")
             
             # Add tracks to playlist (Spotify API limits to 100 tracks per request)
             chunk_size = 100
