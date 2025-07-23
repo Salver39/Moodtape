@@ -408,4 +408,51 @@ class ErrorHandler:
                     )
         except Exception as e:
             self.logger.error(f"Failed to send error message: {e}")
-            # НЕ re-raise exception чтобы не создавать бесконечные циклы ошибок 
+            # НЕ re-raise exception чтобы не создавать бесконечные циклы ошибок
+
+
+# Global error handler instance
+error_handler = ErrorHandler()
+
+
+# Telegram bot error handler function
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors for the Telegram bot."""
+    
+    if context.error:
+        error_type = "general"
+        
+        # Classify error type - FIX: проверяем что error не None
+        error_str = str(context.error).lower() if context.error else ""
+        
+        if "openai" in error_str or "gpt" in error_str:
+            error_type = "mood_parsing"
+        elif "spotify" in error_str:
+            error_type = "spotify_api_error"  
+        elif "apple" in error_str:
+            error_type = "apple_music_api_error"
+        elif "database" in error_str or "sqlite" in error_str:
+            error_type = "database_error"
+        elif "rate limit" in error_str or "too many requests" in error_str:
+            error_type = "api_limit"
+        elif "timeout" in error_str or "network" in error_str:
+            error_type = "network_timeout"
+        elif "conflict" in error_str and "getUpdates" in error_str:
+            error_type = "bot_conflict"  # Новый тип ошибки для конфликтов ботов
+        
+        # Handle the error
+        await error_handler.handle_error(
+            update=update if isinstance(update, Update) else None,
+            context=context,
+            error_type=error_type,
+            original_error=context.error
+        )
+    else:
+        # Если нет ошибки в контексте, логируем как общую ошибку
+        logger.warning("telegram_error_handler called without context.error")
+        await error_handler.handle_error(
+            update=update if isinstance(update, Update) else None,
+            context=context,
+            error_type="general",
+            original_error=None
+        ) 
