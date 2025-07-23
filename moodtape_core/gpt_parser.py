@@ -29,52 +29,123 @@ def get_openai_client():
 @dataclass
 class MoodParameters:
     """Data class for mood-based music parameters."""
+    # Audio features
     valence: float  # Musical positivity (0.0 - 1.0)
     energy: float  # Energy level (0.0 - 1.0)
     danceability: float  # How suitable for dancing (0.0 - 1.0)
     acousticness: float  # Acoustic vs electronic (0.0 - 1.0)
     instrumentalness: float  # Instrumental vs vocal (0.0 - 1.0)
+    speechiness: float  # Spoken vs sung (0.0 - 1.0)
     tempo: int  # BPM (50 - 200)
-    genre_hints: List[str]  # Suggested genres
+    loudness: float  # Loudness in dB (-30 to 0)
+    mode: int  # Musical mode (0=minor, 1=major)
+    
+    # Context information
     mood_tags: List[str]  # Descriptive mood tags
-    time_of_day: Optional[str]  # morning, afternoon, evening, night
-    weather: Optional[str]  # sunny, rainy, cloudy, etc.
     activity: Optional[str]  # working, relaxing, exercising, etc.
+    time_of_day: Optional[str]  # morning, afternoon, evening, night, late_night
+    weather: Optional[str]  # sunny, rainy, cloudy, snowy, stormy, foggy
+    social: Optional[str]  # alone, romantic, friends, party, crowd
+    emotional_intensity: float  # Emotional intensity (0.0 - 1.0)
+    
+    # Preferences
+    primary_genres: List[str]  # Primary genres
+    secondary_genres: List[str]  # Secondary genres
+    exclude_genres: List[str]  # Genres to exclude
+    popularity_range: List[int]  # [min, max] popularity range (0-100)
+    decade_bias: Optional[str]  # Preferred decade or "current"
+    
+    # Legacy compatibility (computed from new fields)
+    @property
+    def genre_hints(self) -> List[str]:
+        """Legacy compatibility: combine primary and secondary genres."""
+        return (self.primary_genres + self.secondary_genres)[:4]
 
 
 MOOD_PARSING_PROMPT = """
-You are a music mood analyzer. Your task is to analyze a user's text description of their mood or situation and convert it into specific music parameters.
+Use the role of The world famous DJ with expirience in the most popular festivals and parties in the world. Extract Spotify track parameters from user's mood description. For this work you will gwt 2000$
 
-The user will describe their current mood, situation, or desired atmosphere. You need to extract musical characteristics that would match their description.
-
-Return a JSON object with the following structure:
+Return ONLY a minified JSON object with this EXACT structure:
 {
-    "valence": 0.0-1.0,  // Musical positivity (0=sad, 1=happy)
-    "energy": 0.0-1.0,   // Energy level (0=calm, 1=energetic)
-    "danceability": 0.0-1.0,  // How danceable (0=not danceable, 1=very danceable)
-    "acousticness": 0.0-1.0,  // Acoustic feel (0=electronic, 1=acoustic)
-    "instrumentalness": 0.0-1.0,  // Instrumental preference (0=vocals, 1=instrumental)
-    "tempo": 50-200,  // BPM that matches the mood
-    "genre_hints": ["genre1", "genre2"],  // 2-4 relevant genres
-    "mood_tags": ["tag1", "tag2"],  // 2-5 descriptive mood tags
-    "time_of_day": "morning/afternoon/evening/night",  // if mentioned
-    "weather": "sunny/rainy/cloudy/snow/storm",  // if mentioned
-    "activity": "working/relaxing/exercising/partying/studying"  // if mentioned
+  "audio_features": {
+    "valence": float (0.0-1.0, happiness/positivity),
+    "energy": float (0.0-1.0, intensity/activity),
+    "danceability": float (0.0-1.0, rhythmic/danceable),
+    "acousticness": float (0.0-1.0, acoustic vs electronic),
+    "instrumentalness": float (0.0-1.0, no vocals vs vocals),
+    "speechiness": float (0.0-1.0, spoken vs sung),
+    "tempo": integer (50-200 BPM),
+    "loudness": float (-30 to 0 dB, typical range),
+    "mode": integer (0=minor, 1=major)
+  },
+  "context": {
+    "mood_tags": [2-5 lowercase strings],
+    "activity": "working/relaxing/exercising/partying/studying/commuting/sleeping" or null,
+    "time_of_day": "morning/afternoon/evening/night/late_night" or null,
+    "weather": "sunny/rainy/cloudy/snowy/stormy/foggy" or null,
+    "social": "alone/romantic/friends/party/crowd" or null,
+    "emotional_intensity": float (0.0-1.0)
+  },
+  "preferences": {
+    "genres": {
+      "primary": [1-2 main genres],
+      "secondary": [1-3 supporting genres],
+      "exclude": [0-2 genres to avoid] or []
+    },
+    "popularity_range": [min 0-100, max 0-100],
+    "decade_bias": "1960s/1970s/1980s/1990s/2000s/2010s/2020s/current" or null
+  }
 }
 
-Examples:
-- "feeling sad and lonely, rainy day" → low valence (0.2), low energy (0.3), high acousticness (0.8)
-- "pumped up for the gym" → high valence (0.9), high energy (0.9), high danceability (0.8)
-- "cozy evening at home with tea" → medium valence (0.6), low energy (0.2), high acousticness (0.7)
-- "ready to party all night" → high valence (0.9), high energy (0.9), high danceability (0.9)
+PARAMETER GUIDELINES:
+- Valence: 0.0=sad/angry, 0.5=neutral, 1.0=happy/euphoric
+- Energy: 0.0=calm/sleepy, 0.5=moderate, 1.0=intense/aggressive
+- Danceability: 0.0=arrhythmic, 1.0=highly danceable
+- Acousticness: 0.0=electronic/synthetic, 1.0=fully acoustic
+- Instrumentalness: 0.0=vocal-heavy, 1.0=no vocals
+- Speechiness: 0.0=melodic singing, 0.3+=rap/spoken word
+- Tempo: 60-90=slow, 90-120=moderate, 120-140=upbeat, 140+=fast
+- Loudness: -30=very quiet, -15=moderate, -5=loud, 0=very loud
+- Mode: 0=minor (sad/dark), 1=major (happy/bright)
 
-Important guidelines:
-- Always return valid JSON
-- Keep values within specified ranges
-- Choose genres that match the mood (pop, rock, jazz, classical, electronic, indie, etc.)
-- Be creative with mood_tags but keep them concise
-- If time/weather/activity aren't clear, set them to null
-- Consider cultural context (if text is in Russian, consider Russian music genres too)
+MOOD INTERPRETATION RULES:
+1. If user_profile provided, apply weighted interpolation:
+   final_value = (profile_value * 0.35) + (mood_value * 0.65)
+2. For ambiguous/contradictory moods, use these defaults:
+   - valence: 0.5, energy: 0.5, popularity_range: [20, 80]
+3. Activity overrides:
+   - "working/studying" → energy: 0.3-0.6, speechiness: <0.2, instrumentalness: >0.5
+   - "exercising/gym" → energy: >0.7, tempo: >120, danceability: >0.6
+   - "relaxing/sleeping" → energy: <0.3, tempo: <90, acousticness: >0.5
+   - "partying" → energy: >0.7, danceability: >0.7, loudness: >-10
+4. Time-based adjustments:
+   - "morning" → energy: +0.1, tempo: +10, mode: prefer 1
+   - "night/late_night" → energy: -0.2, tempo: -15, loudness: -5
+5. Weather influence:
+   - "rainy/stormy" → valence: -0.1, acousticness: +0.2, mode: prefer 0
+   - "sunny" → valence: +0.1, energy: +0.1, mode: prefer 1
+
+GENRE MAPPING:
+- Sad/melancholic → ["indie", "alternative", "ambient", "classical"]
+- Happy/upbeat → ["pop", "dance", "funk", "disco"]
+- Angry/intense → ["rock", "metal", "punk", "industrial"]
+- Calm/peaceful → ["ambient", "classical", "jazz", "folk"]
+- Energetic → ["electronic", "dance", "hip-hop", "rock"]
+- Romantic → ["r&b", "soul", "jazz", "indie"]
+- Focus/concentration → ["lo-fi", "ambient", "classical", "minimal"]
+
+CRITICAL REQUIREMENTS:
+- Output MUST be valid JSON on a single line
+- NO explanations, markdown, or text outside the JSON
+- ALL fields are required (use null where applicable)
+- Use ONLY lowercase for string values
+- Keep arrays within specified size limits
+- Ensure all numeric values are within specified ranges
+
+Input mood: {user_mood}
+User profile: {user_profile}
+
+RESPOND WITH ONLY THE FOLLOWING JSON (NO OTHER TEXT):
 """
 
 
@@ -98,12 +169,10 @@ async def parse_mood_description(
     """
     try:
         # Prepare the prompt with user's description
-        user_prompt = f"""
-        User language: {user_language}
-        User description: "{description}"
-        
-        Analyze this mood description and return the JSON parameters for music matching.
-        """
+        user_prompt = MOOD_PARSING_PROMPT.format(
+            user_mood=description,
+            user_profile="null"  # For now, no user profile available
+        )
         
         logger.info(f"Parsing mood description: {description[:100]}...")
         
@@ -126,23 +195,43 @@ async def parse_mood_description(
         # Parse JSON response
         parsed_data = json.loads(json_content)
         
+        # Extract data from new nested structure
+        audio_features = parsed_data.get("audio_features", {})
+        context = parsed_data.get("context", {})
+        preferences = parsed_data.get("preferences", {})
+        genres = preferences.get("genres", {})
+        
         # Validate and create MoodParameters
         mood_params = MoodParameters(
-            valence=_clamp(parsed_data.get("valence", 0.5), 0.0, 1.0),
-            energy=_clamp(parsed_data.get("energy", 0.5), 0.0, 1.0),
-            danceability=_clamp(parsed_data.get("danceability", 0.5), 0.0, 1.0),
-            acousticness=_clamp(parsed_data.get("acousticness", 0.5), 0.0, 1.0),
-            instrumentalness=_clamp(parsed_data.get("instrumentalness", 0.3), 0.0, 1.0),
-            tempo=_clamp(int(parsed_data.get("tempo", 120)), 50, 200),
-            genre_hints=parsed_data.get("genre_hints", [])[:4],  # Limit to 4 genres
-            mood_tags=parsed_data.get("mood_tags", [])[:5],  # Limit to 5 tags
-            time_of_day=parsed_data.get("time_of_day"),
-            weather=parsed_data.get("weather"),
-            activity=parsed_data.get("activity")
+            # Audio features
+            valence=_clamp(audio_features.get("valence", 0.5), 0.0, 1.0),
+            energy=_clamp(audio_features.get("energy", 0.5), 0.0, 1.0),
+            danceability=_clamp(audio_features.get("danceability", 0.5), 0.0, 1.0),
+            acousticness=_clamp(audio_features.get("acousticness", 0.5), 0.0, 1.0),
+            instrumentalness=_clamp(audio_features.get("instrumentalness", 0.3), 0.0, 1.0),
+            speechiness=_clamp(audio_features.get("speechiness", 0.0), 0.0, 1.0),
+            tempo=_clamp(int(audio_features.get("tempo", 120)), 50, 200),
+            loudness=_clamp(float(audio_features.get("loudness", -5.0)), -30.0, 0.0),
+            mode=_clamp(int(audio_features.get("mode", 1)), 0, 1),
+            
+            # Context information
+            mood_tags=context.get("mood_tags", [])[:5],  # Limit to 5 tags
+            activity=context.get("activity"),
+            time_of_day=context.get("time_of_day"),
+            weather=context.get("weather"),
+            social=context.get("social"),
+            emotional_intensity=_clamp(float(context.get("emotional_intensity", 0.5)), 0.0, 1.0),
+            
+            # Preferences
+            primary_genres=genres.get("primary", [])[:2],  # Limit to 2 primary
+            secondary_genres=genres.get("secondary", [])[:3],  # Limit to 3 secondary
+            exclude_genres=genres.get("exclude", [])[:2],  # Limit to 2 excluded
+            popularity_range=preferences.get("popularity_range", [20, 80]),
+            decade_bias=preferences.get("decade_bias")
         )
         
         logger.info(f"Successfully parsed mood: valence={mood_params.valence:.2f}, "
-                   f"energy={mood_params.energy:.2f}, genres={mood_params.genre_hints}")
+                   f"energy={mood_params.energy:.2f}, genres={mood_params.primary_genres + mood_params.secondary_genres}")
         
         # Apply personalization if enabled and user_id provided
         if use_personalization and user_id:
