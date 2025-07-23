@@ -300,6 +300,7 @@ class PersonalizationEngine:
         
         # Create personalized parameters
         personalized_params = MoodParameters(
+            # Audio features
             valence=self._adjust_parameter(
                 original_params.valence, 
                 user_preferences.valence_bias, 
@@ -321,24 +322,41 @@ class PersonalizationEngine:
                 user_preferences.confidence_score
             ),
             instrumentalness=original_params.instrumentalness,  # Keep original for now
+            speechiness=original_params.speechiness,  # Keep original
             tempo=self._adjust_tempo(
                 original_params.tempo, 
                 user_preferences.tempo_bias, 
                 user_preferences.confidence_score
             ),
-            genre_hints=self._adjust_genres(
-                original_params.genre_hints, 
-                user_preferences.genre_preferences, 
-                user_preferences.confidence_score
-            ),
+            loudness=original_params.loudness,  # Keep original
+            mode=original_params.mode,  # Keep original
+            
+            # Context information (keep original)
             mood_tags=self._adjust_mood_tags(
                 original_params.mood_tags, 
                 user_preferences.mood_tag_preferences, 
                 user_preferences.confidence_score
             ),
+            activity=original_params.activity,
             time_of_day=original_params.time_of_day,
             weather=original_params.weather,
-            activity=original_params.activity
+            social=original_params.social,
+            emotional_intensity=original_params.emotional_intensity,
+            
+            # Preferences (adjusted)
+            primary_genres=self._adjust_primary_genres(
+                original_params.primary_genres, 
+                user_preferences.genre_preferences, 
+                user_preferences.confidence_score
+            ),
+            secondary_genres=self._adjust_secondary_genres(
+                original_params.secondary_genres, 
+                user_preferences.genre_preferences, 
+                user_preferences.confidence_score
+            ),
+            exclude_genres=original_params.exclude_genres,  # Keep original
+            popularity_range=original_params.popularity_range,  # Keep original
+            decade_bias=original_params.decade_bias  # Keep original
         )
         
         logger.info(f"Personalized parameters for user {user_id}: "
@@ -359,13 +377,13 @@ class PersonalizationEngine:
         adjusted = original + adjustment
         return max(50, min(200, adjusted))
     
-    def _adjust_genres(
+    def _adjust_primary_genres(
         self, 
         original_genres: List[str], 
         genre_preferences: Dict[str, float], 
         confidence: float
     ) -> List[str]:
-        """Adjust genre list based on preferences."""
+        """Adjust primary genre list based on preferences."""
         if not genre_preferences or confidence < 0.5:
             return original_genres
         
@@ -384,10 +402,40 @@ class PersonalizationEngine:
             if score > 0.5 and genre not in [g.lower() for g in adjusted_genres]
         ]
         
-        # Add top 2 preferred genres
+        # Add top preferred genres
         adjusted_genres.extend(preferred_genres[:2])
         
-        return adjusted_genres[:4]  # Limit to 4 genres
+        return adjusted_genres[:2]  # Limit to 2 primary genres
+    
+    def _adjust_secondary_genres(
+        self, 
+        original_genres: List[str], 
+        genre_preferences: Dict[str, float], 
+        confidence: float
+    ) -> List[str]:
+        """Adjust secondary genre list based on preferences."""
+        if not genre_preferences or confidence < 0.5:
+            return original_genres
+        
+        # Start with original genres
+        adjusted_genres = original_genres.copy()
+        
+        # Remove genres with strong negative preference
+        adjusted_genres = [
+            genre for genre in adjusted_genres 
+            if genre_preferences.get(genre.lower(), 0) > -0.3  # Less strict than primary
+        ]
+        
+        # Add moderately preferred genres if not already present
+        moderate_genres = [
+            genre for genre, score in genre_preferences.items() 
+            if 0.2 < score <= 0.5 and genre not in [g.lower() for g in adjusted_genres]
+        ]
+        
+        # Add moderate preference genres
+        adjusted_genres.extend(moderate_genres[:3])
+        
+        return adjusted_genres[:3]  # Limit to 3 secondary genres
     
     def _adjust_mood_tags(
         self, 
