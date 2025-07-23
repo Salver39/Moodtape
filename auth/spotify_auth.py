@@ -527,8 +527,7 @@ class SpotifyClient:
             
             # Create playlist with cleaned parameters
             try:
-                playlist = self.client.user_playlist_create(
-                    user="me",
+                playlist = self.client.current_user_create_playlist(
                     name=clean_name,
                     public=public,
                     description=clean_description
@@ -538,8 +537,7 @@ class SpotifyClient:
                 logger.info(f"Trying to create playlist without description...")
                 
                 # Fallback: create playlist without description
-                playlist = self.client.user_playlist_create(
-                    user="me",
+                playlist = self.client.current_user_create_playlist(
                     name=clean_name,
                     public=public
                 )
