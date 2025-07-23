@@ -226,7 +226,7 @@ def start_health_server():
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
 
-def main() -> None:
+async def main() -> None:
     """Start the bot."""
     # Validate required environment variables
     try:
@@ -298,28 +298,41 @@ def main() -> None:
     
     logger.info("Moodtape bot starting...")
     
-    if WEBHOOK_URL and not DEBUG:
-        # Production mode with webhook
-        logger.info(f"Starting bot with webhook: {WEBHOOK_URL}")
-        _application.run_webhook(
-            listen="0.0.0.0",
-            port=8000,
-            url_path="webhook",
-            webhook_url=f"{WEBHOOK_URL}/webhook"
-        )
-    else:
-        # Development mode with polling
-        logger.info("Starting bot with polling (development mode)")
-        _application.run_polling(
-            poll_interval=1.0,
-            timeout=30,
-            drop_pending_updates=True
-        )
+    # CRITICAL: Clear webhook to avoid conflicts from previous deployments
+    try:
+        logger.info("Clearing any existing webhook...")
+        await _application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook cleared successfully")
+    except Exception as e:
+        logger.warning(f"Failed to clear webhook: {e}")
+    
+    # TEMPORARY FIX: Use polling in production to avoid Render.com deployment conflicts
+    # Render's zero-downtime deployment causes multiple bot instances during deploy
+    # which triggers "terminated by other getUpdates request" errors
+    
+    # if WEBHOOK_URL and not DEBUG:
+    #     # Production mode with webhook (DISABLED due to Render conflicts)
+    #     logger.info(f"Starting bot with webhook: {WEBHOOK_URL}")
+    #     _application.run_webhook(
+    #         listen="0.0.0.0",
+    #         port=8000,
+    #         url_path="webhook",
+    #         webhook_url=f"{WEBHOOK_URL}/webhook"
+    #     )
+    # else:
+    
+    # ALWAYS use polling (safer for Render.com deployment)
+    logger.info("Starting bot with polling (safer for Render deployments)")
+    _application.run_polling(
+        poll_interval=1.0,
+        timeout=30,
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
