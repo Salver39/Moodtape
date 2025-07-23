@@ -488,7 +488,7 @@ class SpotifyClient:
         name: str, 
         description: str,
         track_uris: List[str],
-        public: bool = True
+        public: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         Create a new playlist with specified tracks.
@@ -534,7 +534,7 @@ class SpotifyClient:
                     "public": public,
                     "description": clean_description
                 }
-                headers = {"Authorization": f"Bearer {self.client.auth_manager.get_access_token()['access_token']}"}
+                headers = {"Authorization": f"Bearer {self._cached_token}"}
                 response = self.client._session.post(url, json=payload, headers=headers)
                 
                 if response.status_code == 201:
@@ -551,7 +551,7 @@ class SpotifyClient:
                     "name": clean_name,
                     "public": public
                 }
-                headers = {"Authorization": f"Bearer {self.client.auth_manager.get_access_token()['access_token']}"}
+                headers = {"Authorization": f"Bearer {self._cached_token}"}
                 response = self.client._session.post(url, json=payload, headers=headers)
                 
                 if response.status_code == 201:
