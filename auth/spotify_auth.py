@@ -242,9 +242,9 @@ class SpotifyClient:
             
             # Проверяем соединение
             try:
-                user_info = self.client.current_user()
+                # user_info = self.client.current_user()  # Removed to avoid 403 error
                 logger.info(f"Successfully connected to Spotify for user {self.user_id}, "
-                           f"Spotify user: {user_info.get('display_name', user_info['id'])}, "
+                logger.info(f"Successfully connected to Spotify for user {self.user_id}, token expires: {expires_at}")
                            f"token expires: {expires_at}")
                 return True
             except Exception as test_error:
@@ -490,7 +490,7 @@ class SpotifyClient:
         name: str, 
         description: str,
         track_uris: List[str],
-        public: bool = False
+        public: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Create a new playlist with specified tracks.
@@ -509,7 +509,7 @@ class SpotifyClient:
         
         try:
             # Get current user info
-            user_info = self.client.current_user()
+            # user_info = self.client.current_user()  # Removed to avoid 403 error
             
             # Sanitize inputs for Spotify API
             clean_name = name.replace('\n', ' ').replace('\r', ' ').strip()
@@ -521,7 +521,7 @@ class SpotifyClient:
             
             # Debug logging with exact parameters
             logger.info(f"Creating playlist for user {self.user_id}:")
-            logger.info(f"  user_id: '{user_info['id']}'")
+            # logger.info(f"  user_id: removed for 403 fix")
             logger.info(f"  name: '{clean_name}' (len={len(clean_name)})")
             logger.info(f"  description: '{clean_description[:150]}...' (len={len(clean_description)})")
             logger.info(f"  public: {public}")
@@ -530,7 +530,7 @@ class SpotifyClient:
             # Create playlist with cleaned parameters
             try:
                 playlist = self.client.user_playlist_create(
-                    user=user_info['id'],
+                    user="me",
                     name=clean_name,
                     public=public,
                     description=clean_description
@@ -541,7 +541,7 @@ class SpotifyClient:
                 
                 # Fallback: create playlist without description
                 playlist = self.client.user_playlist_create(
-                    user=user_info['id'],
+                    user="me",
                     name=clean_name,
                     public=public
                 )
