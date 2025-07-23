@@ -295,22 +295,6 @@ def start_health_server():
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
 
-async def _clear_webhook_safely():
-    """Safely clear any existing webhook to prevent getUpdates conflicts."""
-    try:
-        if _application and _application.bot:
-            # Clear webhook
-            await _application.bot.delete_webhook(drop_pending_updates=True)
-            logger.info("🧹 Webhook cleared and pending updates dropped")
-            
-            # Small delay to ensure webhook is fully cleared
-            await asyncio.sleep(2)
-        else:
-            logger.warning("⚠️ Cannot clear webhook - application not initialized")
-    except Exception as e:
-        logger.warning(f"⚠️ Error clearing webhook: {e}")
-        # Don't re-raise - continue with polling anyway
-
 
 def main() -> None:
     """Start the bot."""
@@ -348,17 +332,6 @@ def main() -> None:
         logger.error(f"❌ Failed to create Telegram application: {e}")
         remove_pid_file()
         return
-    
-    # AGGRESSIVE MULTIPLE INSTANCE PROTECTION
-    # Clear any existing webhooks that might cause conflicts
-    try:
-        logger.info("🧹 Clearing existing webhooks to prevent conflicts...")
-        import asyncio
-        asyncio.run(_clear_webhook_safely())
-        logger.info("✅ Webhook cleared successfully")
-    except Exception as webhook_error:
-        logger.warning(f"⚠️ Could not clear webhook: {webhook_error}")
-        # Continue anyway, polling should override
     
     # Wait a bit for any old instances to fully terminate
     logger.info("⏳ Waiting for any old bot instances to terminate...")
@@ -427,13 +400,6 @@ def main() -> None:
                 delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s delays
                 logger.info(f"⏳ Attempt {attempt + 1}/{max_attempts} - waiting {delay}s for old instances to die...")
                 time.sleep(delay)
-                
-                # Try clearing webhook again before retry
-                try:
-                    asyncio.run(_clear_webhook_safely())
-                    logger.info("🧹 Webhook cleared before retry")
-                except:
-                    pass
             
             logger.info(f"🔄 Starting bot attempt {attempt + 1}/{max_attempts} with polling")
             
@@ -441,10 +407,11 @@ def main() -> None:
             poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
             timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
             
+            # FIXED: Use sync approach - run_polling handles event loop internally
             _application.run_polling(
                 poll_interval=poll_interval,
                 timeout=timeout,
-                drop_pending_updates=True,
+                drop_pending_updates=True,  # This clears old updates automatically
                 stop_signals=None,
                 close_loop=False
             )
