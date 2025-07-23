@@ -322,8 +322,19 @@ class SpotifyClient:
         
         try:
             # Strategy 1: Genre-based search with audio features
-            if mood_params.genre_hints:
-                for genre in mood_params.genre_hints[:2]:
+            # Use new MoodParameters structure (primary + secondary genres)
+            available_genres = []
+            if hasattr(mood_params, 'primary_genres') and mood_params.primary_genres:
+                available_genres.extend(mood_params.primary_genres)
+            if hasattr(mood_params, 'secondary_genres') and mood_params.secondary_genres:
+                available_genres.extend(mood_params.secondary_genres)
+            
+            # Fallback to legacy genre_hints if new structure not available
+            if not available_genres and hasattr(mood_params, 'genre_hints') and mood_params.genre_hints:
+                available_genres = mood_params.genre_hints
+            
+            if available_genres:
+                for genre in available_genres[:3]:  # Use top 3 genres
                     search_query = f"genre:{genre}"
                     logger.info(f"Discovery search 1 - Genre: {search_query}")
                     
@@ -337,6 +348,10 @@ class SpotifyClient:
                             'audio_features': None,
                             'discovery_method': f'genre_{genre}'
                         })
+                        
+                logger.info(f"Genre search found {len([t for t in all_tracks if t.get('discovery_method', '').startswith('genre_')])} tracks from genres: {available_genres[:3]}")
+            else:
+                logger.warning(f"No genres available for mood search for user {self.user_id}")
             
             # Strategy 2: Mood descriptors search (for discovery)
             mood_descriptors = []

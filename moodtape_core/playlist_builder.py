@@ -74,27 +74,39 @@ class PlaylistBuilder:
             query_id = str(uuid.uuid4())
             
             logger.info(f"Building playlist for user {self.user_id}, query {query_id}")
+            logger.info(f"Mood params: valence={mood_params.valence:.2f}, energy={mood_params.energy:.2f}")
+            logger.info(f"Mood tags: {mood_params.mood_tags}")
+            logger.info(f"Primary genres: {getattr(mood_params, 'primary_genres', [])}")
+            logger.info(f"Secondary genres: {getattr(mood_params, 'secondary_genres', [])}")
+            logger.info(f"Legacy genre_hints: {getattr(mood_params, 'genre_hints', [])}")
             
             # Get tracks from different sources
             if self.service == "spotify":
+                logger.info("Getting user preference tracks...")
                 # Spotify: user preferences + mood-based tracks
                 user_tracks = self._get_user_preference_tracks()
+                logger.info(f"Found {len(user_tracks)} user preference tracks")
+                
+                logger.info("Getting mood-based tracks...")
                 mood_tracks = self._get_mood_based_tracks(mood_params, playlist_length)
+                logger.info(f"Found {len(mood_tracks)} mood-based tracks")
                 
                 # Combine and select best tracks
+                logger.info("Combining and selecting tracks...")
                 final_tracks = self._combine_and_select_tracks(
                     user_tracks=user_tracks,
                     mood_tracks=mood_tracks,
                     target_length=playlist_length,
                     mood_params=mood_params
                 )
+                logger.info(f"Selected {len(final_tracks)} final tracks")
             else:
                 # Apple Music: only mood-based tracks (no user preferences)
                 mood_tracks = self._get_mood_based_tracks(mood_params, playlist_length)
                 final_tracks = mood_tracks[:playlist_length]
             
             if not final_tracks:
-                logger.error(f"No tracks found for user {self.user_id}")
+                logger.error(f"No tracks found for user {self.user_id} - this is the main problem!")
                 # Log failed query
                 db_manager.log_query(
                     query_id=query_id,
@@ -108,9 +120,12 @@ class PlaylistBuilder:
                 return None
             
             # Create playlist
+            logger.info("Generating playlist name and description...")
             playlist_name = self._generate_playlist_name(mood_params, mood_description)
             playlist_description = self._generate_playlist_description(mood_params, mood_description)
+            logger.info(f"Playlist name: '{playlist_name}'")
             
+            logger.info("Creating playlist in Spotify...")
             playlist_info = await self._create_playlist(
                 name=playlist_name,
                 description=playlist_description,
@@ -191,6 +206,8 @@ class PlaylistBuilder:
     def _get_mood_based_tracks(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """Get tracks that match the mood parameters."""
         if self.service == "spotify" and self.spotify_client:
+            logger.info(f"Starting mood-based track search for user {self.user_id}")
+            
             # Get user's known tracks to exclude them from discovery
             user_liked_ids = set()
             try:
@@ -201,7 +218,13 @@ class PlaylistBuilder:
                 logger.warning(f"Could not get user's liked tracks for filtering: {e}")
             
             # Get mood-based tracks
-            mood_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=limit * 3)  # Get more to filter
+            logger.info(f"Calling search_tracks_by_mood with limit={limit * 3}")
+            try:
+                mood_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=limit * 3)  # Get more to filter
+                logger.info(f"search_tracks_by_mood returned {len(mood_tracks)} tracks")
+            except Exception as e:
+                logger.error(f"Error in search_tracks_by_mood: {e}")
+                return []
             
             # Filter out tracks user already knows
             discovery_tracks = []
@@ -217,6 +240,7 @@ class PlaylistBuilder:
             logger.info(f"Found {len(mood_tracks)} Apple Music mood-based tracks for user {self.user_id}")
             return mood_tracks
         
+        logger.warning(f"No mood tracks found - service={self.service}, spotify_client={self.spotify_client}")
         return []
     
     def _combine_and_select_tracks(
@@ -401,16 +425,33 @@ class PlaylistBuilder:
         if self.service == "spotify" and self.spotify_client:
             track_uris = [track['uri'] for track in tracks if track.get('uri')]
             
+            logger.info(f"Preparing to create Spotify playlist with {len(track_uris)} track URIs")
+            
             if not track_uris:
                 logger.error(f"No valid track URIs found for user {self.user_id}")
+                logger.error(f"Track sample: {tracks[:3] if tracks else 'No tracks'}")
                 return None
             
-            return self.spotify_client.create_playlist(
-                name=name,
-                description=description,
-                track_uris=track_uris,
-                public=False  # Keep playlists private by default
-            )
+            logger.info(f"Calling Spotify API to create playlist...")
+            try:
+                result = self.spotify_client.create_playlist(
+                    name=name,
+                    description=description,
+                    track_uris=track_uris,
+                    public=False  # Keep playlists private by default
+                )
+                
+                if result:
+                    logger.info(f"Successfully created Spotify playlist: {result.get('url', 'No URL')}")
+                else:
+                    logger.error(f"Spotify API returned None/False when creating playlist")
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Exception when creating Spotify playlist: {e}")
+                return None
+                
         elif self.service == "apple_music":
             # Apple Music: create a deep link playlist
             playlist_link = apple_music_client.create_playlist_link(tracks, name)
@@ -427,6 +468,7 @@ class PlaylistBuilder:
                 'service': 'apple_music'
             }
         
+        logger.error(f"Unknown service '{self.service}' or client not available")
         return None
 
 
