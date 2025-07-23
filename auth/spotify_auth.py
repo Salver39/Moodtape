@@ -243,9 +243,7 @@ class SpotifyClient:
             # Проверяем соединение
             try:
                 # user_info = self.client.current_user()  # Removed to avoid 403 error
-                logger.info(f"Successfully connected to Spotify for user {self.user_id}, "
                 logger.info(f"Successfully connected to Spotify for user {self.user_id}, token expires: {expires_at}")
-                           f"token expires: {expires_at}")
                 return True
             except Exception as test_error:
                 logger.error(f"Token validation failed for user {self.user_id}: {test_error}")
