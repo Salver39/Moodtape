@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -11,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL, validate_required_env_vars
+from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL, validate_required_env_vars, DATA_DIR
 from utils.logger import get_logger
 
 # Import handlers
@@ -38,6 +39,52 @@ logger = get_logger(__name__)
 # Global application instance
 _application = None
 _shutdown_event = asyncio.Event()
+_pid_file = DATA_DIR / "bot.pid"
+
+def create_pid_file():
+    """Create PID file to prevent multiple instances."""
+    try:
+        if _pid_file.exists():
+            # Check if the process is still running
+            try:
+                with open(_pid_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+                
+                # Check if process exists
+                try:
+                    os.kill(old_pid, 0)  # Signal 0 checks if process exists
+                    logger.warning(f"⚠️ Bot already running with PID {old_pid}")
+                    logger.warning("🔧 If this is incorrect, delete the PID file manually:")
+                    logger.warning(f"   rm {_pid_file}")
+                    return False
+                except OSError:
+                    # Process doesn't exist, remove stale PID file
+                    logger.info(f"🧹 Removing stale PID file (process {old_pid} not found)")
+                    _pid_file.unlink()
+            except (ValueError, IOError):
+                # Invalid PID file, remove it
+                logger.info("🧹 Removing invalid PID file")
+                _pid_file.unlink()
+        
+        # Create new PID file
+        with open(_pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+        
+        logger.info(f"📝 Created PID file: {_pid_file} (PID: {os.getpid()})")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Could not create PID file: {e}")
+        return True  # Continue anyway
+
+def remove_pid_file():
+    """Remove PID file on shutdown."""
+    try:
+        if _pid_file.exists():
+            _pid_file.unlink()
+            logger.info(f"🗑️ Removed PID file: {_pid_file}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not remove PID file: {e}")
 
 def get_application():
     """Get the global application instance."""
@@ -48,7 +95,7 @@ def signal_handler(signum, frame):
     logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
     _shutdown_event.set()
     
-    # Give some time for cleanup before force exit
+    # Clean shutdown sequence
     if _application:
         try:
             # Stop the application gracefully
@@ -56,6 +103,9 @@ def signal_handler(signum, frame):
             asyncio.create_task(_application.shutdown())
         except Exception as e:
             logger.error(f"Error during graceful shutdown: {e}")
+    
+    # Remove PID file
+    remove_pid_file()
     
     logger.info("👋 Goodbye!")
     sys.exit(0)
@@ -248,6 +298,13 @@ def start_health_server():
 
 def main() -> None:
     """Start the bot."""
+    # Check for existing instances via PID file
+    if not create_pid_file():
+        logger.error("❌ Another bot instance is already running!")
+        logger.error("💡 If you're sure no other instance is running, delete the PID file:")
+        logger.error(f"   rm {_pid_file}")
+        return
+    
     # Setup signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -259,6 +316,7 @@ def main() -> None:
     except ValueError as e:
         logger.error(f"❌ Configuration error: {e}")
         logger.error("Please set the required environment variables and restart the bot")
+        remove_pid_file()
         return
     
     # Start health check server in background thread for Render compatibility
@@ -394,4 +452,10 @@ if __name__ == "__main__":
             except:
                 pass
         
-        sys.exit(1) 
+        # Always remove PID file on exit
+        remove_pid_file()
+        
+        sys.exit(1)
+    finally:
+        # Ensure PID file is removed even if we exit normally
+        remove_pid_file() 
