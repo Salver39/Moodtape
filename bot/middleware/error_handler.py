@@ -349,67 +349,63 @@ class ErrorHandler:
     ) -> None:
         """Send user-friendly error message."""
         
-        error_messages = ERROR_CONTEXTS.get(error_type, ERROR_CONTEXTS["general"])
-        message = error_messages.get(language, error_messages["ru"])
-        
         try:
-            if update and update.message:
+            # БЕЗОПАСНОСТЬ: Проверяем что все параметры не None
+            if not error_type:
+                error_type = "general"
+            if not language:
+                language = "ru"
+            
+            # БЕЗОПАСНОСТЬ: Проверяем что ERROR_CONTEXTS существует и error_type валиден
+            if not hasattr(self, 'ERROR_CONTEXTS') and 'ERROR_CONTEXTS' not in globals():
+                # Fallback сообщения если ERROR_CONTEXTS недоступен
+                fallback_messages = {
+                    "ru": "❌ Произошла техническая ошибка. Попробуйте позже.",
+                    "en": "❌ Technical error occurred. Please try later.",
+                    "es": "❌ Error técnico. Inténtalo más tarde."
+                }
+                message = fallback_messages.get(language, fallback_messages["ru"])
+            else:
+                error_messages = ERROR_CONTEXTS.get(error_type)
+                if not error_messages:
+                    error_messages = ERROR_CONTEXTS.get("general", {})
+                
+                # БЕЗОПАСНОСТЬ: Проверяем что error_messages это dict и не None
+                if not isinstance(error_messages, dict):
+                    error_messages = ERROR_CONTEXTS.get("general", {})
+                
+                message = error_messages.get(language)
+                if not message:
+                    message = error_messages.get("ru")
+                if not message:
+                    # Последний fallback
+                    message = "❌ Произошла техническая ошибка. Попробуйте позже."
+            
+            # БЕЗОПАСНОСТЬ: Убеждаемся что message это строка
+            if not isinstance(message, str):
+                message = "❌ Произошла техническая ошибка. Попробуйте позже."
+        
+        except Exception as msg_error:
+            # Если даже создание сообщения не удалось
+            self.logger.error(f"Failed to create error message: {msg_error}")
+            message = "❌ Technical error occurred."
+        
+        # Отправляем сообщение с дополнительными проверками
+        try:
+            if update and hasattr(update, 'message') and update.message:
                 await update.message.reply_text(message)
-            elif update and update.callback_query:
+            elif update and hasattr(update, 'callback_query') and update.callback_query:
                 await update.callback_query.answer(message, show_alert=True)
-            elif context and context.bot:
+            elif context and hasattr(context, 'bot') and context.bot:
                 # Fallback: try to get user from context
-                if hasattr(context, 'user_data') and 'user_id' in context.user_data:
+                if (hasattr(context, 'user_data') and 
+                    context.user_data and 
+                    isinstance(context.user_data, dict) and 
+                    'user_id' in context.user_data):
                     await context.bot.send_message(
                         chat_id=context.user_data['user_id'],
                         text=message
                     )
         except Exception as e:
             self.logger.error(f"Failed to send error message: {e}")
-
-
-# Global error handler instance
-error_handler = ErrorHandler()
-
-
-# Telegram bot error handler function
-async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors for the Telegram bot."""
-    
-    if context.error:
-        error_type = "general"
-        
-        # Classify error type - FIX: проверяем что error не None
-        error_str = str(context.error).lower() if context.error else ""
-        
-        if "openai" in error_str or "gpt" in error_str:
-            error_type = "mood_parsing"
-        elif "spotify" in error_str:
-            error_type = "spotify_api_error"  
-        elif "apple" in error_str:
-            error_type = "apple_music_api_error"
-        elif "database" in error_str or "sqlite" in error_str:
-            error_type = "database_error"
-        elif "rate limit" in error_str or "too many requests" in error_str:
-            error_type = "api_limit"
-        elif "timeout" in error_str or "network" in error_str:
-            error_type = "network_timeout"
-        elif "conflict" in error_str and "getUpdates" in error_str:
-            error_type = "bot_conflict"  # Новый тип ошибки для конфликтов ботов
-        
-        # Handle the error
-        await error_handler.handle_error(
-            update=update if isinstance(update, Update) else None,
-            context=context,
-            error_type=error_type,
-            original_error=context.error
-        )
-    else:
-        # Если нет ошибки в контексте, логируем как общую ошибку
-        logger.warning("telegram_error_handler called without context.error")
-        await error_handler.handle_error(
-            update=update if isinstance(update, Update) else None,
-            context=context,
-            error_type="general",
-            original_error=None
-        ) 
+            # НЕ re-raise exception чтобы не создавать бесконечные циклы ошибок 
