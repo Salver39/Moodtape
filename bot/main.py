@@ -295,6 +295,22 @@ def start_health_server():
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
 
+async def _clear_webhook_safely():
+    """Safely clear any existing webhook to prevent getUpdates conflicts."""
+    try:
+        if _application and _application.bot:
+            # Clear webhook
+            await _application.bot.delete_webhook(drop_pending_updates=True)
+            logger.info("🧹 Webhook cleared and pending updates dropped")
+            
+            # Small delay to ensure webhook is fully cleared
+            await asyncio.sleep(2)
+        else:
+            logger.warning("⚠️ Cannot clear webhook - application not initialized")
+    except Exception as e:
+        logger.warning(f"⚠️ Error clearing webhook: {e}")
+        # Don't re-raise - continue with polling anyway
+
 
 def main() -> None:
     """Start the bot."""
@@ -330,7 +346,23 @@ def main() -> None:
         logger.info("✅ Telegram application created successfully")
     except Exception as e:
         logger.error(f"❌ Failed to create Telegram application: {e}")
+        remove_pid_file()
         return
+    
+    # AGGRESSIVE MULTIPLE INSTANCE PROTECTION
+    # Clear any existing webhooks that might cause conflicts
+    try:
+        logger.info("🧹 Clearing existing webhooks to prevent conflicts...")
+        import asyncio
+        asyncio.run(_clear_webhook_safely())
+        logger.info("✅ Webhook cleared successfully")
+    except Exception as webhook_error:
+        logger.warning(f"⚠️ Could not clear webhook: {webhook_error}")
+        # Continue anyway, polling should override
+    
+    # Wait a bit for any old instances to fully terminate
+    logger.info("⏳ Waiting for any old bot instances to terminate...")
+    time.sleep(5)
     
     # Add handlers
     
@@ -383,47 +415,67 @@ def main() -> None:
         job_queue.run_repeating(cleanup_rate_limiter, interval=21600, first=60)  # 6 hours
         logger.info("Rate limiter cleanup job scheduled")
     
-    logger.info("🚀 Moodtape bot starting...")
+    logger.info("🚀 Moodtape bot starting with AGGRESSIVE instance protection...")
     
-    # RENDER.COM MULTIPLE INSTANCE FIX:
-    # Zero-downtime deployments on Render can cause multiple bot instances
-    # We use aggressive polling settings and better error handling
+    # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
+    max_attempts = 3
+    base_delay = 10
     
-    try:
-        logger.info("🔄 Starting bot with polling (multiple instance protection)")
-        _application.run_polling(
-            poll_interval=2.0,          # Увеличил интервал для снижения нагрузки
-            timeout=20,                 # Уменьшил timeout для быстрого обнаружения конфликтов
-            drop_pending_updates=True,  # Агрессивная очистка старых updates
-            stop_signals=None,          # Отключаем стандартные сигналы, используем свои
-            close_loop=False            # Не закрываем loop автоматически
-        )
-    except Exception as e:
-        error_str = str(e).lower()
-        if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
-            logger.error("🚨 MULTIPLE BOT INSTANCES DETECTED!")
-            logger.error("💡 This is likely due to Render.com zero-downtime deployment")
-            logger.error("⏳ Waiting for old instance to terminate...")
+    for attempt in range(max_attempts):
+        try:
+            if attempt > 0:
+                delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s delays
+                logger.info(f"⏳ Attempt {attempt + 1}/{max_attempts} - waiting {delay}s for old instances to die...")
+                time.sleep(delay)
+                
+                # Try clearing webhook again before retry
+                try:
+                    asyncio.run(_clear_webhook_safely())
+                    logger.info("🧹 Webhook cleared before retry")
+                except:
+                    pass
             
-            # Wait for old instance to die, then retry
-            import time
-            time.sleep(10)
+            logger.info(f"🔄 Starting bot attempt {attempt + 1}/{max_attempts} with polling")
             
-            try:
-                logger.info("🔄 Retrying bot startup after conflict resolution...")
-                _application.run_polling(
-                    poll_interval=3.0,
-                    timeout=15,
-                    drop_pending_updates=True,
-                    stop_signals=None,
-                    close_loop=False
-                )
-            except Exception as retry_error:
-                logger.error(f"❌ Failed to start bot after retry: {retry_error}")
-                raise
-        else:
-            logger.error(f"❌ Unexpected error starting bot: {e}")
-            raise
+            # Progressively more conservative settings for each retry
+            poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
+            timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
+            
+            _application.run_polling(
+                poll_interval=poll_interval,
+                timeout=timeout,
+                drop_pending_updates=True,
+                stop_signals=None,
+                close_loop=False
+            )
+            
+            # If we get here, polling started successfully
+            logger.info("🎵 Bot started successfully!")
+            break
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            
+            if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
+                logger.error(f"🚨 ATTEMPT {attempt + 1}: Multiple bot instances detected!")
+                logger.error(f"💡 Error: {e}")
+                
+                if attempt < max_attempts - 1:
+                    logger.error(f"🔄 Will retry in {base_delay * (2 ** attempt)} seconds...")
+                    continue
+                else:
+                    logger.error("💥 FINAL ATTEMPT FAILED - Multiple instances still running!")
+                    logger.error("🔧 MANUAL ACTION REQUIRED:")
+                    logger.error("   1. Check Render.com dashboard for multiple deployments")
+                    logger.error("   2. Manually stop old deployments")
+                    logger.error("   3. Wait 30 seconds and redeploy")
+                    raise
+            else:
+                logger.error(f"❌ Unexpected error on attempt {attempt + 1}: {e}")
+                if attempt < max_attempts - 1:
+                    continue
+                else:
+                    raise
 
 
 if __name__ == "__main__":
