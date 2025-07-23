@@ -226,7 +226,21 @@ def start_health_server():
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
 
-async def main() -> None:
+async def clear_webhook_async():
+    """Clear webhook in separate async function to avoid event loop conflicts."""
+    try:
+        # We need to create a temporary bot instance for webhook clearing
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        logger.info("Clearing any existing webhook...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.close()  # Important: close the bot session
+        logger.info("Webhook cleared successfully")
+    except Exception as e:
+        logger.warning(f"Failed to clear webhook: {e}")
+
+
+def main() -> None:
     """Start the bot."""
     # Validate required environment variables
     try:
@@ -240,6 +254,13 @@ async def main() -> None:
     # Start health check server in background thread for Render compatibility
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
+    
+    # CRITICAL: Clear webhook to avoid conflicts from previous deployments
+    # This must be done before creating the Application to avoid event loop conflicts
+    try:
+        asyncio.run(clear_webhook_async())
+    except Exception as e:
+        logger.warning(f"Failed to clear webhook: {e}")
     
     # Create application
     global _application
@@ -298,14 +319,6 @@ async def main() -> None:
     
     logger.info("Moodtape bot starting...")
     
-    # CRITICAL: Clear webhook to avoid conflicts from previous deployments
-    try:
-        logger.info("Clearing any existing webhook...")
-        await _application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook cleared successfully")
-    except Exception as e:
-        logger.warning(f"Failed to clear webhook: {e}")
-    
     # TEMPORARY FIX: Use polling in production to avoid Render.com deployment conflicts
     # Render's zero-downtime deployment causes multiple bot instances during deploy
     # which triggers "terminated by other getUpdates request" errors
@@ -332,7 +345,7 @@ async def main() -> None:
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
