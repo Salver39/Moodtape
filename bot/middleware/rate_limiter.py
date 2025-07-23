@@ -49,10 +49,10 @@ class RateLimiter:
         # Rate limits for different operations
         self.limits = {
             "playlist_creation": RateLimit(
-                requests_per_minute=3,
-                requests_per_hour=15,
+                requests_per_minute=2,  # 2 запроса в минуту как требует пользователь
+                requests_per_hour=20,   # Увеличил для удобства 
                 requests_per_day=50,
-                cooldown_seconds=300  # 5 minutes
+                cooldown_seconds=60     # 1 минута вместо 5 минут
             ),
             "mood_parsing": RateLimit(
                 requests_per_minute=5,
@@ -77,10 +77,10 @@ class RateLimiter:
         # Blacklist users get stricter limits (half of normal)
         self.blacklist_limits = {
             "playlist_creation": RateLimit(
-                requests_per_minute=1,
-                requests_per_hour=7,
+                requests_per_minute=1,  # Половина от нового лимита 2
+                requests_per_hour=10,   # Половина от нового лимита 20
                 requests_per_day=25,
-                cooldown_seconds=600  # 10 minutes
+                cooldown_seconds=120    # 2 минуты для нарушителей
             ),
             "mood_parsing": RateLimit(
                 requests_per_minute=2,
