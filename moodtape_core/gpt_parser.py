@@ -66,8 +66,8 @@ MOOD_PARSING_PROMPT = """
 Use the role of The world famous DJ with expirience in the most popular festivals and parties in the world. Extract Spotify track parameters from user's mood description. For this work you will gwt 2000$
 
 Return ONLY a minified JSON object with this EXACT structure:
-{
-  "audio_features": {
+{{
+  "audio_features": {{
     "valence": float (0.0-1.0, happiness/positivity),
     "energy": float (0.0-1.0, intensity/activity),
     "danceability": float (0.0-1.0, rhythmic/danceable),
@@ -77,25 +77,25 @@ Return ONLY a minified JSON object with this EXACT structure:
     "tempo": integer (50-200 BPM),
     "loudness": float (-30 to 0 dB, typical range),
     "mode": integer (0=minor, 1=major)
-  },
-  "context": {
+  }},
+  "context": {{
     "mood_tags": [2-5 lowercase strings],
     "activity": "working/relaxing/exercising/partying/studying/commuting/sleeping" or null,
     "time_of_day": "morning/afternoon/evening/night/late_night" or null,
     "weather": "sunny/rainy/cloudy/snowy/stormy/foggy" or null,
     "social": "alone/romantic/friends/party/crowd" or null,
     "emotional_intensity": float (0.0-1.0)
-  },
-  "preferences": {
-    "genres": {
+  }},
+  "preferences": {{
+    "genres": {{
       "primary": [1-2 main genres],
       "secondary": [1-3 supporting genres],
       "exclude": [0-2 genres to avoid] or []
-    },
+    }},
     "popularity_range": [min 0-100, max 0-100],
     "decade_bias": "1960s/1970s/1980s/1990s/2000s/2010s/2020s/current" or null
-  }
-}
+  }}
+}}
 
 PARAMETER GUIDELINES:
 - Valence: 0.0=sad/angry, 0.5=neutral, 1.0=happy/euphoric
