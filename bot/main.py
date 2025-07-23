@@ -217,27 +217,13 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         pass
 
 def start_health_server():
-    """Start simple HTTP server for health checks."""
-    port = int(os.getenv("PORT", 8000))
+    """Start a simple health check server for Render.com"""
     try:
-        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        logger.info(f"🏥 Health check server started on port {port}")
+        server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
+        logger.info(f"🏥 Health check server started on port 10000")
         server.serve_forever()
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
-
-async def clear_webhook_async():
-    """Clear webhook in separate async function to avoid event loop conflicts."""
-    try:
-        # We need to create a temporary bot instance for webhook clearing
-        from telegram import Bot
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        logger.info("Clearing any existing webhook...")
-        await bot.delete_webhook(drop_pending_updates=True)
-        await bot.close()  # Important: close the bot session
-        logger.info("Webhook cleared successfully")
-    except Exception as e:
-        logger.warning(f"Failed to clear webhook: {e}")
 
 
 def main() -> None:
@@ -254,13 +240,6 @@ def main() -> None:
     # Start health check server in background thread for Render compatibility
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
-    
-    # CRITICAL: Clear webhook to avoid conflicts from previous deployments
-    # This must be done before creating the Application to avoid event loop conflicts
-    try:
-        asyncio.run(clear_webhook_async())
-    except Exception as e:
-        logger.warning(f"Failed to clear webhook: {e}")
     
     # Create application
     global _application
@@ -323,16 +302,8 @@ def main() -> None:
     # Render's zero-downtime deployment causes multiple bot instances during deploy
     # which triggers "terminated by other getUpdates request" errors
     
-    # if WEBHOOK_URL and not DEBUG:
-    #     # Production mode with webhook (DISABLED due to Render conflicts)
-    #     logger.info(f"Starting bot with webhook: {WEBHOOK_URL}")
-    #     _application.run_webhook(
-    #         listen="0.0.0.0",
-    #         port=8000,
-    #         url_path="webhook",
-    #         webhook_url=f"{WEBHOOK_URL}/webhook"
-    #     )
-    # else:
+    # NOTE: Webhook clearing removed due to Telegram flood control
+    # The polling mode with drop_pending_updates=True will handle old updates
     
     # ALWAYS use polling (safer for Render.com deployment)
     logger.info("Starting bot with polling (safer for Render deployments)")
