@@ -148,6 +148,47 @@ User profile: {user_profile}
 RESPOND WITH ONLY THE FOLLOWING JSON (NO OTHER TEXT):
 """
 
+# Simple fallback prompt for when the main prompt fails
+SIMPLE_MOOD_PARSING_PROMPT = """
+You are a music mood analyzer. Analyze the user's mood and return a JSON with music parameters.
+
+User mood: {user_mood}
+
+Return ONLY this JSON structure (no other text):
+{{
+  "audio_features": {{
+    "valence": 0.5,
+    "energy": 0.5,
+    "danceability": 0.5,
+    "acousticness": 0.5,
+    "instrumentalness": 0.3,
+    "speechiness": 0.1,
+    "tempo": 120,
+    "loudness": -5.0,
+    "mode": 1
+  }},
+  "context": {{
+    "mood_tags": ["neutral"],
+    "activity": null,
+    "time_of_day": null,
+    "weather": null,
+    "social": null,
+    "emotional_intensity": 0.5
+  }},
+  "preferences": {{
+    "genres": {{
+      "primary": ["pop"],
+      "secondary": ["alternative"],
+      "exclude": []
+    }},
+    "popularity_range": [20, 80],
+    "decade_bias": null
+  }}
+}}
+
+Adjust the values based on the user's mood description.
+"""
+
 
 async def parse_mood_description(
     description: str, 
@@ -190,7 +231,29 @@ async def parse_mood_description(
         
         # Extract JSON from response
         json_content = response.choices[0].message.content
-        logger.debug(f"GPT-4o response: {json_content}")
+        logger.debug(f"Raw GPT-4o response: {repr(json_content)}")
+        
+        # Clean JSON content - remove leading/trailing whitespace and markdown
+        if json_content:
+            # Remove markdown code blocks if present
+            if json_content.startswith('```'):
+                json_content = json_content.split('```')[1]
+                if json_content.startswith('json'):
+                    json_content = json_content[4:]
+            elif json_content.endswith('```'):
+                json_content = json_content.split('```')[0]
+            
+            # Remove leading/trailing whitespace
+            json_content = json_content.strip()
+            
+            # Remove any leading/trailing characters that aren't { or }
+            start_idx = json_content.find('{')
+            end_idx = json_content.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_content = json_content[start_idx:end_idx + 1]
+            
+            logger.debug(f"Cleaned JSON content: {json_content[:200]}...")
         
         # Parse JSON response
         parsed_data = json.loads(json_content)
@@ -254,7 +317,37 @@ async def parse_mood_description(
         
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON from GPT response: {e}")
-        return None
+        logger.error(f"Raw response was: {repr(response.choices[0].message.content if 'response' in locals() else 'No response')}")
+        
+        # Try fallback with simpler prompt
+        try:
+            logger.info("Attempting fallback with simpler prompt...")
+            fallback_prompt = SIMPLE_MOOD_PARSING_PROMPT.format(
+                user_mood=description
+            )
+            
+            fallback_response = await get_openai_client().chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": fallback_prompt}],
+                temperature=0.3,
+                max_tokens=300,
+                response_format={"type": "json_object"}
+            )
+            
+            fallback_content = fallback_response.choices[0].message.content.strip()
+            
+            # Clean fallback content same way
+            start_idx = fallback_content.find('{')
+            end_idx = fallback_content.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                fallback_content = fallback_content[start_idx:end_idx + 1]
+            
+            parsed_data = json.loads(fallback_content)
+            logger.info("Fallback parsing successful")
+            
+        except Exception as fallback_error:
+            logger.error(f"Fallback parsing also failed: {fallback_error}")
+            return None
     except openai.RateLimitError as e:
         logger.error(f"OpenAI rate limit exceeded: {e}")
         return None
@@ -263,6 +356,15 @@ async def parse_mood_description(
         return None
     except Exception as e:
         logger.error(f"Unexpected error in mood parsing: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Description: {description[:100]}...")
+        
+        # Log raw response if available
+        if 'response' in locals():
+            logger.error(f"Raw GPT response: {repr(response.choices[0].message.content)}")
+        
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 
