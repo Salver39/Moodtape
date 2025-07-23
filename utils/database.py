@@ -153,15 +153,26 @@ class DatabaseManager:
         """Check if user token is valid and not expired."""
         token_data = self.get_user_token(user_id, service)
         if not token_data:
+            logger.info(f"No token found for user {user_id}, service {service}")
             return False
         
-        # Check if token is expired
+        # Проверяем обязательные поля
+        if not token_data.get('access_token'):
+            logger.info(f"No access_token found for user {user_id}, service {service}")
+            return False
+        
+        # Проверяем истечение токена с буфером 5 минут
         if token_data.get('expires_at'):
             current_time = int(time.time())
-            if current_time >= token_data['expires_at']:
-                logger.info(f"Token expired for user {user_id}, service {service}")
+            expires_at = token_data['expires_at']
+            buffer_time = 300  # 5 минут
+            
+            if current_time >= (expires_at - buffer_time):
+                logger.info(f"Token for user {user_id}, service {service} will expire soon "
+                           f"(expires: {expires_at}, now: {current_time}, buffer: {buffer_time})")
                 return False
         
+        logger.debug(f"Token is valid for user {user_id}, service {service}")
         return True
     
     # Feedback methods

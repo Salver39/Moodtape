@@ -114,23 +114,66 @@ async def check_spotify_auth_status(update: Update, context: ContextTypes.DEFAUL
     
     user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
-    # Check if user already has valid Spotify token
-    if db_manager.is_token_valid(user.id, "spotify"):
-        # User is already authorized
-        logger.info(f"User {user.id} already has valid Spotify token")
-        
-        # Save service selection and show success
-        user_sessions.set_session_data(user.id, "music_service", "spotify")
-        
-        success_text = get_text(
-            "service_selected", 
-            user_language, 
-            service="Spotify"
-        )
-        
-        await query.edit_message_text(success_text, parse_mode="HTML")
+    # Проверяем токен более детально
+    token_data = db_manager.get_user_token(user.id, "spotify")
+    
+    if token_data and token_data.get("access_token"):
+        # У пользователя есть токен, проверяем его валидность
+        if db_manager.is_token_valid(user.id, "spotify"):
+            # Токен действителен - пользователь уже авторизован
+            logger.info(f"User {user.id} already has valid Spotify token")
+            
+            # Сохраняем выбор сервиса и показываем успех
+            user_sessions.set_session_data(user.id, "music_service", "spotify")
+            
+            if user_language == "ru":
+                success_text = (
+                    "✅ <b>Spotify подключен!</b>\n\n"
+                    "🎵 Ваш аккаунт Spotify уже авторизован и готов к использованию.\n\n"
+                    "💭 <b>Опишите ваше настроение</b> - я создам персональный плейлист!"
+                )
+            else:
+                success_text = get_text(
+                    "service_selected", 
+                    user_language, 
+                    service="Spotify"
+                )
+            
+            await query.edit_message_text(success_text, parse_mode="HTML")
+        else:
+            # Токен истек или недействителен, но у нас есть refresh_token
+            if token_data.get("refresh_token"):
+                logger.info(f"User {user.id} has expired token but refresh_token available, attempting refresh")
+                
+                # Пытаемся обновить токен
+                from auth.spotify_auth import spotify_auth
+                new_token = spotify_auth.refresh_token(user.id)
+                
+                if new_token:
+                    # Успешно обновили токен
+                    logger.info(f"Successfully refreshed token for user {user.id}")
+                    user_sessions.set_session_data(user.id, "music_service", "spotify")
+                    
+                    if user_language == "ru":
+                        success_text = (
+                            "✅ <b>Spotify переподключен!</b>\n\n"
+                            "🔄 Ваш токен доступа был автоматически обновлен.\n\n"
+                            "💭 <b>Опишите ваше настроение</b> - я создам плейлист!"
+                        )
+                    else:
+                        success_text = get_text("service_selected", user_language, service="Spotify")
+                    
+                    await query.edit_message_text(success_text, parse_mode="HTML")
+                else:
+                    # Не удалось обновить токен - нужна повторная авторизация
+                    logger.warning(f"Failed to refresh token for user {user.id}, requiring re-authorization")
+                    await handle_spotify_auth_request(update, context)
+            else:
+                # Нет refresh_token - нужна полная авторизация
+                logger.info(f"User {user.id} has invalid token without refresh capability")
+                await handle_spotify_auth_request(update, context)
     else:
-        # User needs to authorize
+        # У пользователя нет токена - нужна авторизация
         logger.info(f"User {user.id} needs Spotify authorization")
         await handle_spotify_auth_request(update, context)
 

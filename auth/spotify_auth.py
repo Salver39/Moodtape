@@ -46,9 +46,9 @@ class SpotifyAuth:
                     client_secret=SPOTIPY_CLIENT_SECRET,
                     redirect_uri=SPOTIPY_REDIRECT_URI,
                     scope=" ".join(SPOTIFY_SCOPES),
-                    show_dialog=True  # Always show auth dialog
+                    show_dialog=False  # ИСПРАВЛЕНО: Не заставляем пользователя повторно авторизовываться
                 )
-                logger.info("Spotify OAuth initialized successfully")
+                logger.info("Spotify OAuth initialized successfully - persistent auth enabled")
             except Exception as e:
                 logger.error(f"Failed to initialize Spotify OAuth: {e}")
                 self.oauth = None
@@ -138,34 +138,38 @@ class SpotifyAuth:
             return None
         
         try:
-            # Create temporary token info for refresh
-            token_info = {
-                "access_token": token_data["access_token"],
-                "refresh_token": token_data["refresh_token"],
-                "expires_at": token_data["expires_at"]
-            }
+            logger.info(f"Refreshing Spotify token for user {user_id}")
             
-            # Refresh token
+            # Используем refresh_token напрямую
             new_token_info = self.oauth.refresh_access_token(token_data["refresh_token"])
             
-            if new_token_info:
-                # Save updated token
+            if new_token_info and new_token_info.get("access_token"):
+                # Рассчитываем новое время истечения
+                expires_in = new_token_info.get("expires_in", 3600)
+                new_expires_at = int(time.time()) + expires_in
+                
+                # Сохраняем обновленный токен, сохраняя старый refresh_token если новый не предоставлен
+                new_refresh_token = new_token_info.get("refresh_token", token_data["refresh_token"])
+                
                 db_manager.save_user_token(
                     user_id=user_id,
                     service="spotify",
                     access_token=new_token_info["access_token"],
-                    refresh_token=new_token_info.get("refresh_token", token_data["refresh_token"]),
-                    expires_at=int(time.time()) + new_token_info.get("expires_in", 3600),
-                    scope=new_token_info.get("scope")
+                    refresh_token=new_refresh_token,
+                    expires_at=new_expires_at,
+                    scope=new_token_info.get("scope", token_data.get("scope"))
                 )
                 
-                logger.info(f"Successfully refreshed Spotify token for user {user_id}")
+                logger.info(f"Successfully refreshed Spotify token for user {user_id}, new expiry: {new_expires_at}")
                 return new_token_info["access_token"]
+            else:
+                logger.error(f"Invalid response from token refresh for user {user_id}: {new_token_info}")
+                return None
         
         except Exception as e:
             logger.error(f"Error refreshing Spotify token for user {user_id}: {e}")
-        
-        return None
+            # При ошибке refresh token может быть недействительным, но не удаляем токен - пользователь должен заново авторизоваться
+            return None
 
 
 class SpotifyClient:
@@ -181,6 +185,8 @@ class SpotifyClient:
         self.user_id = user_id
         self.spotify_auth = SpotifyAuth()
         self.client: Optional[spotipy.Spotify] = None
+        self._cached_token = None  # Кэш токена в памяти
+        self._token_expires_at = None  # Время истечения кэшированного токена
         
         # Initialize client
         self._init_client()
@@ -193,33 +199,67 @@ class SpotifyClient:
             True if successful, False otherwise
         """
         try:
-            # Get user token
+            # Проверяем кэшированный токен
+            current_time = int(time.time())
+            if (self._cached_token and self._token_expires_at and 
+                current_time < (self._token_expires_at - 300)):  # 5 минут буфер
+                logger.info(f"Using cached token for user {self.user_id}")
+                self.client = spotipy.Spotify(auth=self._cached_token)
+                return True
+            
+            # Получаем токен из базы данных
             token_data = db_manager.get_user_token(self.user_id, "spotify")
             
             if not token_data:
                 logger.warning(f"No Spotify token found for user {self.user_id}")
                 return False
             
-            # Check if token is expired and refresh if needed
-            if not db_manager.is_token_valid(self.user_id, "spotify"):
-                logger.info(f"Token expired for user {self.user_id}, attempting refresh")
-                new_token = self.spotify_auth.refresh_token(self.user_id)
-                if not new_token:
-                    logger.error(f"Failed to refresh token for user {self.user_id}")
-                    return False
+            access_token = token_data["access_token"]
+            expires_at = token_data.get("expires_at", 0)
+            
+            # Проверяем, истек ли токен (с буфером 5 минут)
+            if expires_at and current_time >= (expires_at - 300):
+                logger.info(f"Token for user {self.user_id} expires soon (at {expires_at}, now {current_time}), refreshing...")
                 
-                # Get updated token data
-                token_data = db_manager.get_user_token(self.user_id, "spotify")
+                # Пытаемся обновить токен
+                new_token = self.spotify_auth.refresh_token(self.user_id)
+                if new_token:
+                    # Получаем обновленные данные токена
+                    token_data = db_manager.get_user_token(self.user_id, "spotify")
+                    access_token = token_data["access_token"]
+                    expires_at = token_data.get("expires_at", 0)
+                    logger.info(f"Token refreshed successfully for user {self.user_id}")
+                else:
+                    logger.error(f"Failed to refresh token for user {self.user_id}, user will need to re-authorize")
+                    return False
             
-            # Create Spotify client
-            self.client = spotipy.Spotify(auth=token_data["access_token"])
+            # Создаем Spotify client с валидным токеном
+            self.client = spotipy.Spotify(auth=access_token)
             
-            # Test the connection
-            user_info = self.client.current_user()
-            logger.info(f"Successfully connected to Spotify for user {self.user_id}, "
-                       f"Spotify user: {user_info.get('display_name', user_info['id'])}")
+            # Кэшируем токен в памяти
+            self._cached_token = access_token
+            self._token_expires_at = expires_at
             
-            return True
+            # Проверяем соединение
+            try:
+                user_info = self.client.current_user()
+                logger.info(f"Successfully connected to Spotify for user {self.user_id}, "
+                           f"Spotify user: {user_info.get('display_name', user_info['id'])}, "
+                           f"token expires: {expires_at}")
+                return True
+            except Exception as test_error:
+                logger.error(f"Token validation failed for user {self.user_id}: {test_error}")
+                # Очищаем кэш и пытаемся обновить токен
+                self._cached_token = None
+                self._token_expires_at = None
+                
+                # Последняя попытка - обновить токен
+                new_token = self.spotify_auth.refresh_token(self.user_id)
+                if new_token:
+                    return self._init_client()  # Рекурсивный вызов после обновления
+                else:
+                    logger.error(f"Final token refresh failed for user {self.user_id}")
+                    return False
         
         except Exception as e:
             logger.error(f"Error initializing Spotify client for user {self.user_id}: {e}")
