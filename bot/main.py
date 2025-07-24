@@ -388,55 +388,88 @@ def main() -> None:
         job_queue.run_repeating(cleanup_rate_limiter, interval=21600, first=60)  # 6 hours
         logger.info("Rate limiter cleanup job scheduled")
     
-    logger.info("🚀 Moodtape bot starting with AGGRESSIVE instance protection...")
+    logger.info("🚀 Moodtape bot starting...")
     
-    # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
-    max_attempts = 3
-    base_delay = 10
-    
-    for attempt in range(max_attempts):
+    # Choose between webhook and polling mode
+    if WEBHOOK_URL:
+        logger.info("🌐 Starting in WEBHOOK mode for production")
         try:
-            if attempt > 0:
-                delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s delays
-                logger.info(f"⏳ Attempt {attempt + 1}/{max_attempts} - waiting {delay}s for old instances to die...")
-                time.sleep(delay)
+            from config.production import get_webhook_config
+            webhook_config = get_webhook_config()
             
-            logger.info(f"🔄 Starting bot attempt {attempt + 1}/{max_attempts} with polling")
-            
-            # Progressively more conservative settings for each retry
-            poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
-            timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
-            
-            # FIXED: Use sync approach - run_polling handles event loop internally
-            _application.run_polling(
-                poll_interval=poll_interval,
-                timeout=timeout,
-                drop_pending_updates=True,  # This clears old updates automatically
-                stop_signals=None,
-                close_loop=False
-            )
-            
-            # If we get here, polling started successfully
-            logger.info("🎵 Bot started successfully!")
-            break
-            
+            if webhook_config:
+                _application.run_webhook(
+                    listen=webhook_config["listen"],
+                    port=webhook_config["port"], 
+                    url_path=webhook_config["path"],
+                    webhook_url=webhook_config["url"] + webhook_config["path"],
+                    secret_token=webhook_config.get("secret_token"),
+                    drop_pending_updates=True
+                )
+                logger.info("🎵 Bot started successfully in webhook mode!")
+            else:
+                logger.error("❌ Failed to get webhook configuration")
+                remove_pid_file()
+                return
         except Exception as e:
-            error_str = str(e).lower()
-            
-            if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
-                logger.error(f"🚨 ATTEMPT {attempt + 1}: Multiple bot instances detected!")
-                logger.error(f"💡 Error: {e}")
+            logger.error(f"❌ Failed to start webhook mode: {e}")
+            remove_pid_file()
+            return
+    else:
+        logger.info("🔄 Starting in POLLING mode for development")
+        # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
+        max_attempts = 3
+        base_delay = 10
+        
+        for attempt in range(max_attempts):
+            try:
+                if attempt > 0:
+                    delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s delays
+                    logger.info(f"⏳ Attempt {attempt + 1}/{max_attempts} - waiting {delay}s for old instances to die...")
+                    time.sleep(delay)
                 
-                if attempt < max_attempts - 1:
-                    logger.error(f"🔄 Will retry in {base_delay * (2 ** attempt)} seconds...")
-                    continue
+                logger.info(f"🔄 Starting bot attempt {attempt + 1}/{max_attempts} with polling")
+                
+                # Progressively more conservative settings for each retry
+                poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
+                timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
+                
+                # FIXED: Use sync approach - run_polling handles event loop internally
+                _application.run_polling(
+                    poll_interval=poll_interval,
+                    timeout=timeout,
+                    drop_pending_updates=True,  # This clears old updates automatically
+                    stop_signals=None,
+                    close_loop=False
+                )
+                
+                # If we get here, polling started successfully
+                logger.info("🎵 Bot started successfully!")
+                break
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
+                    logger.error(f"🚨 ATTEMPT {attempt + 1}: Multiple bot instances detected!")
+                    logger.error(f"💡 Error: {e}")
+                    
+                    if attempt < max_attempts - 1:
+                        logger.error(f"�� Will retry in {base_delay * (2 ** attempt)} seconds...")
+                        continue
+                    else:
+                        logger.error("💥 FINAL ATTEMPT FAILED - Multiple instances still running!")
+                        logger.error("🔧 MANUAL ACTION REQUIRED:")
+                        logger.error("   1. Check Render.com dashboard for multiple deployments")
+                        logger.error("   2. Manually stop old deployments")
+                        logger.error("   3. Wait 30 seconds and redeploy")
+                        raise
                 else:
-                    logger.error("💥 FINAL ATTEMPT FAILED - Multiple instances still running!")
-                    logger.error("🔧 MANUAL ACTION REQUIRED:")
-                    logger.error("   1. Check Render.com dashboard for multiple deployments")
-                    logger.error("   2. Manually stop old deployments")
-                    logger.error("   3. Wait 30 seconds and redeploy")
-                    raise
+                    logger.error(f"❌ Unexpected error on attempt {attempt + 1}: {e}")
+                    if attempt < max_attempts - 1:
+                        continue
+                    else:
+                        raise
             else:
                 logger.error(f"❌ Unexpected error on attempt {attempt + 1}: {e}")
                 if attempt < max_attempts - 1:
