@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "python-telegram-bot[job-queue]==20.7",
+    "python-telegram-bot[webhooks]>=20.6",
     "openai==1.35.8",
     "spotipy==2.23.0",
     "requests==2.31.0",
