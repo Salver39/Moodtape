@@ -543,21 +543,31 @@ def rate_limited(operation: str = "general"):
                 return await func(update, context, *args, **kwargs)
             
             user_id = update.effective_user.id
-            allowed, error_message = await rate_limiter.check_rate_limit(
-                user_id=user_id,
-                operation=operation,
-                update=update,
-                context=context
-            )
             
-            if not allowed:
-                # Send rate limit message
-                if error_message:
-                    if update.message:
-                        await update.message.reply_text(error_message)
-                    elif update.callback_query:
-                        await update.callback_query.answer(error_message, show_alert=True)
-                return
+            try:
+                allowed, error_message = await rate_limiter.check_rate_limit(
+                    user_id=user_id,
+                    operation=operation,
+                    update=update,
+                    context=context
+                )
+                
+                if not allowed:
+                    # Send rate limit message
+                    if error_message:
+                        try:
+                            if update.message:
+                                await update.message.reply_text(error_message)
+                            elif update.callback_query:
+                                await update.callback_query.answer(error_message, show_alert=True)
+                        except Exception as e:
+                            logger.error(f"Failed to send rate limit message: {e}")
+                    return
+                
+            except Exception as e:
+                # КРИТИЧНО: При ошибке в rate limiter НЕ блокируем команду!
+                logger.error(f"Rate limiter error for user {user_id}, operation {operation}: {e}")
+                # Продолжаем выполнение функции без блокировки
             
             # Call original function
             return await func(update, context, *args, **kwargs)

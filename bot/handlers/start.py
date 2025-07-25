@@ -7,12 +7,12 @@ from utils.i18n import get_user_language, get_text, user_sessions
 from utils.logger import get_logger
 from config.settings import MUSIC_SERVICES
 from bot.handlers.auth import check_spotify_auth_status, check_apple_music_availability
-from bot.middleware.rate_limiter import rate_limited
+from bot.middleware.rate_limiter import rate_limited  # Включено обратно с улучшенной обработкой ошибок
 
 logger = get_logger(__name__)
 
 
-@rate_limited(operation="general")
+@rate_limited(operation="general")  # Включено обратно с улучшенной обработкой ошибок
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle /start command.

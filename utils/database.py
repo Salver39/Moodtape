@@ -3,6 +3,7 @@
 import sqlite3
 import json
 import time
+import os
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
@@ -10,6 +11,21 @@ from config.settings import DATA_DIR
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Убеждаемся, что папка data существует и доступна для записи
+try:
+    DATA_DIR.mkdir(exist_ok=True)
+    # Проверяем права на запись
+    test_file = DATA_DIR / ".write_test"
+    test_file.touch()
+    test_file.unlink()
+    logger.info(f"✅ Data directory is accessible: {DATA_DIR}")
+except Exception as e:
+    logger.error(f"❌ Data directory is not accessible: {DATA_DIR}, error: {e}")
+    # Создаем fallback папку в текущей директории
+    DATA_DIR = Path.cwd() / "data"
+    DATA_DIR.mkdir(exist_ok=True)
+    logger.warning(f"⚠️ Using fallback data directory: {DATA_DIR}")
 
 # Database paths
 TOKENS_DB_PATH = DATA_DIR / "tokens.sqlite"
@@ -291,18 +307,26 @@ class DatabaseManager:
             violation_type: Type of violation (e.g., 'per_minute', 'per_hour')
             cooldown_seconds: Cooldown period applied
         """
-        current_time = int(time.time())
-        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-            conn.execute("""
-                INSERT INTO rate_limit_violations 
-                (user_id, operation, violation_type, cooldown_seconds, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, operation, violation_type, cooldown_seconds, current_time))
-            conn.commit()
-        logger.warning(
-            f"Rate limit violation logged: user={user_id}, operation={operation}, "
-            f"violation={violation_type}, cooldown={cooldown_seconds}s"
-        )
+        try:
+            current_time = int(time.time())
+            with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
+                conn.execute("""
+                    INSERT INTO rate_limit_violations 
+                    (user_id, operation, violation_type, cooldown_seconds, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, operation, violation_type, cooldown_seconds, current_time))
+                conn.commit()
+            logger.warning(
+                f"Rate limit violation logged: user={user_id}, operation={operation}, "
+                f"violation={violation_type}, cooldown={cooldown_seconds}s"
+            )
+        except Exception as e:
+            # НЕ бросаем исключение - просто логируем ошибку
+            logger.error(f"Failed to log rate limit violation to database: {e}")
+            logger.warning(
+                f"Rate limit violation (not logged): user={user_id}, operation={operation}, "
+                f"violation={violation_type}, cooldown={cooldown_seconds}s"
+            )
     
     def get_rate_limit_violations(
         self,
