@@ -587,6 +587,44 @@ class SpotifyClient:
         except SpotifyException as e:
             logger.error(f"Error creating playlist for user {self.user_id}: {e}")
             return None
+    
+    def get_audio_features(self, track_ids: List[str]) -> List[Optional[Dict[str, Any]]]:
+        """
+        Get audio features for multiple tracks.
+        
+        Args:
+            track_ids: List of Spotify track IDs
+        
+        Returns:
+            List of audio features dicts (or None for tracks without features)
+        """
+        if not self.client or not track_ids:
+            return []
+        
+        try:
+            logger.info(f"Fetching audio features for {len(track_ids)} tracks")
+            
+            # Spotify allows max 100 tracks per request
+            all_features = []
+            batch_size = 100
+            
+            for i in range(0, len(track_ids), batch_size):
+                batch_ids = track_ids[i:i + batch_size]
+                try:
+                    features_batch = self.client.audio_features(batch_ids)
+                    all_features.extend(features_batch)
+                    logger.debug(f"Retrieved audio features for batch {i//batch_size + 1}")
+                except SpotifyException as e:
+                    logger.error(f"Error fetching audio features batch {i//batch_size + 1}: {e}")
+                    # Add None placeholders for failed batch
+                    all_features.extend([None] * len(batch_ids))
+            
+            logger.info(f"Successfully retrieved audio features for {len([f for f in all_features if f])} out of {len(track_ids)} tracks")
+            return all_features
+            
+        except SpotifyException as e:
+            logger.error(f"Error fetching audio features for user {self.user_id}: {e}")
+            return [None] * len(track_ids)  # Return None placeholders
 
 
 # Global Spotify auth instance
