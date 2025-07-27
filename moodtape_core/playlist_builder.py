@@ -79,40 +79,85 @@ class PlaylistBuilder:
             # Generate unique query ID
             query_id = str(uuid.uuid4())
             
-            logger.info(f"Building playlist for user {self.user_id}, query {query_id}")
-            logger.info(f"Mood params: valence={mood_params.valence:.2f}, energy={mood_params.energy:.2f}")
-            logger.info(f"Mood tags: {mood_params.mood_tags}")
-            logger.info(f"Primary genres: {getattr(mood_params, 'primary_genres', [])}")
-            logger.info(f"Secondary genres: {getattr(mood_params, 'secondary_genres', [])}")
-            logger.info(f"Legacy genre_hints: {getattr(mood_params, 'genre_hints', [])}")
+            # 🔍 DIAGNOSTIC LOGGING: Playlist creation start
+            logger.info(f"🔍 [PLAYLIST_BUILD] Starting playlist creation for user {self.user_id}")
+            logger.info(f"🔍 [PLAYLIST_BUILD] Query ID: {query_id}")
+            logger.info(f"🔍 [PLAYLIST_BUILD] Service: {self.service}, Target length: {playlist_length}")
+            logger.info(f"🔍 [PLAYLIST_BUILD] Mood description: '{mood_description}'")
+            
+            # Detailed MoodParameters logging with fallback support
+            try:
+                if hasattr(mood_params, 'valence'):
+                    logger.info(f"🔍 [PLAYLIST_BUILD] Audio features (flat): valence={mood_params.valence:.2f}, "
+                               f"energy={mood_params.energy:.2f}, tempo={getattr(mood_params, 'tempo', 'N/A')}")
+                elif hasattr(mood_params, 'audio_features'):
+                    af = mood_params.audio_features
+                    logger.info(f"🔍 [PLAYLIST_BUILD] Audio features (nested): valence={getattr(af, 'valence', 'N/A'):.2f}, "
+                               f"energy={getattr(af, 'energy', 'N/A'):.2f}, tempo={getattr(af, 'tempo', 'N/A')}")
+                
+                logger.info(f"🔍 [PLAYLIST_BUILD] Mood tags: {getattr(mood_params, 'mood_tags', [])}")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Activity: {getattr(mood_params, 'activity', 'N/A')}")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Primary genres: {getattr(mood_params, 'primary_genres', [])}")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Secondary genres: {getattr(mood_params, 'secondary_genres', [])}")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Legacy genre_hints: {getattr(mood_params, 'genre_hints', [])}")
+            except Exception as e:
+                logger.warning(f"🔍 [PLAYLIST_BUILD] Could not log MoodParameters details: {e}")
+            
+            logger.info(f"🔍 [PLAYLIST_BUILD] Service availability check...")
+            if not self.is_service_available():
+                logger.error(f"❌ [PLAYLIST_BUILD] Service {self.service} not available!")
+                return None
             
             # Get tracks from different sources
             if self.service == "spotify":
-                logger.info("Getting user preference tracks...")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Step 1: Getting user preference tracks...")
                 # Spotify: user preferences + mood-based tracks
                 user_tracks = self._get_user_preference_tracks()
-                logger.info(f"Found {len(user_tracks)} user preference tracks")
+                logger.info(f"🔍 [PLAYLIST_BUILD] User preference tracks: {len(user_tracks)} found")
                 
-                logger.info("Getting mood-based tracks...")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Step 2: Getting mood-based tracks...")
                 mood_tracks = self._get_mood_based_tracks(mood_params, playlist_length)
-                logger.info(f"Found {len(mood_tracks)} mood-based tracks")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Mood-based tracks: {len(mood_tracks)} found")
+                
+                if not mood_tracks:
+                    logger.error(f"❌ [PLAYLIST_BUILD] CRITICAL: No mood-based tracks found!")
+                    logger.error(f"❌ [PLAYLIST_BUILD] This is likely the root cause of 'No tracks found' error")
                 
                 # Combine and select best tracks
-                logger.info("Combining and selecting tracks...")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Step 3: Combining and selecting tracks...")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Input: {len(user_tracks)} user + {len(mood_tracks)} mood tracks")
+                
                 final_tracks = self._combine_and_select_tracks(
                     user_tracks=user_tracks,
                     mood_tracks=mood_tracks,
                     target_length=playlist_length,
                     mood_params=mood_params
                 )
-                logger.info(f"Selected {len(final_tracks)} final tracks")
+                logger.info(f"🔍 [PLAYLIST_BUILD] Final combination result: {len(final_tracks)} tracks selected")
             else:
                 # Apple Music: only mood-based tracks (no user preferences)
+                logger.info(f"🔍 [PLAYLIST_BUILD] Apple Music mode: getting mood-based tracks only...")
                 mood_tracks = self._get_mood_based_tracks(mood_params, playlist_length)
+                logger.info(f"🔍 [PLAYLIST_BUILD] Apple Music mood tracks: {len(mood_tracks)} found")
                 final_tracks = mood_tracks[:playlist_length]
+                logger.info(f"🔍 [PLAYLIST_BUILD] Apple Music final tracks: {len(final_tracks)} selected")
+            
+            # 🔍 CRITICAL DIAGNOSTIC POINT: Track count analysis
+            logger.info(f"🔍 [PLAYLIST_BUILD] CRITICAL CHECK: Final track count = {len(final_tracks)}")
             
             if not final_tracks:
-                logger.error(f"No tracks found for user {self.user_id} - this is the main problem!")
+                logger.error(f"❌ [PLAYLIST_BUILD] CRITICAL ERROR: No tracks found for user {self.user_id}!")
+                logger.error(f"❌ [PLAYLIST_BUILD] This is the root cause of the 'No tracks found' problem!")
+                logger.error(f"❌ [PLAYLIST_BUILD] Analysis:")
+                if self.service == "spotify":
+                    logger.error(f"❌ [PLAYLIST_BUILD]   - User tracks: {len(user_tracks) if 'user_tracks' in locals() else 'N/A'}")
+                    logger.error(f"❌ [PLAYLIST_BUILD]   - Mood tracks: {len(mood_tracks) if 'mood_tracks' in locals() else 'N/A'}")
+                else:
+                    logger.error(f"❌ [PLAYLIST_BUILD]   - Apple Music mood tracks: {len(mood_tracks) if 'mood_tracks' in locals() else 'N/A'}")
+                logger.error(f"❌ [PLAYLIST_BUILD]   - Service: {self.service}")
+                logger.error(f"❌ [PLAYLIST_BUILD]   - Service available: {self.is_service_available()}")
+            else:
+                logger.info(f"✅ [PLAYLIST_BUILD] SUCCESS: {len(final_tracks)} tracks ready for playlist creation")
                 # Log failed query
                 db_manager.log_query(
                     query_id=query_id,
@@ -211,31 +256,36 @@ class PlaylistBuilder:
     
     def _get_mood_based_tracks(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """Get tracks that match the mood parameters with intelligent filtering."""
+        # 🔍 DIAGNOSTIC LOGGING: Original search method
+        logger.info(f"🔍 [ORIGINAL_SEARCH] Starting original mood-based track search for user {self.user_id}")
+        logger.info(f"🔍 [ORIGINAL_SEARCH] Target limit: {limit}, Service: {self.service}")
+        
         if self.service == "spotify" and self.spotify_client:
-            logger.info(f"Starting intelligent mood-based track search for user {self.user_id}")
+            logger.info(f"🔍 [ORIGINAL_SEARCH] Using Spotify original search method")
             
             # Get user's known tracks to exclude them from discovery
             user_liked_ids = set()
             try:
                 liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
                 user_liked_ids = {track['id'] for track in liked_tracks}
-                logger.info(f"Excluding {len(user_liked_ids)} user's liked tracks from discovery")
+                logger.info(f"🔍 [ORIGINAL_SEARCH] Found {len(user_liked_ids)} user's liked tracks to exclude")
             except Exception as e:
-                logger.warning(f"Could not get user's liked tracks for filtering: {e}")
+                logger.warning(f"🔍 [ORIGINAL_SEARCH] Could not get user's liked tracks for filtering: {e}")
             
             # Get a larger pool of mood-based tracks for intelligent filtering
             search_limit = limit * 5  # Get 5x more tracks for better filtering
-            logger.info(f"Searching for {search_limit} candidate tracks to filter from")
+            logger.info(f"🔍 [ORIGINAL_SEARCH] Searching for {search_limit} candidate tracks using traditional method")
             
             try:
                 candidate_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=search_limit)
-                logger.info(f"Retrieved {len(candidate_tracks)} candidate tracks from Spotify")
+                logger.info(f"🔍 [ORIGINAL_SEARCH] Traditional search returned {len(candidate_tracks)} candidate tracks")
             except Exception as e:
-                logger.error(f"Error in search_tracks_by_mood: {e}")
+                logger.error(f"❌ [ORIGINAL_SEARCH] Error in search_tracks_by_mood: {e}")
                 return []
             
             if not candidate_tracks:
-                logger.warning("No candidate tracks found from Spotify search")
+                logger.error(f"❌ [ORIGINAL_SEARCH] CRITICAL: Traditional search returned 0 tracks!")
+                logger.error(f"❌ [ORIGINAL_SEARCH] This indicates fundamental Spotify API issues")
                 return []
             
             # Filter out tracks user already knows
@@ -298,50 +348,144 @@ class PlaylistBuilder:
         Returns:
             List of tracks found through smart search strategies
         """
+        # 🔍 DIAGNOSTIC LOGGING: Input parameters
+        logger.info(f"🔍 [SMART_SEARCH] Starting enhanced mood-based discovery for user {self.user_id}")
+        logger.info(f"🔍 [SMART_SEARCH] Target limit: {limit}, Service: {self.service}")
+        
+        # Log MoodParameters details for debugging
+        try:
+            # Try nested structure first
+            if hasattr(mood_params, 'audio_features'):
+                af = mood_params.audio_features
+                logger.info(f"🔍 [SMART_SEARCH] Audio features: valence={getattr(af, 'valence', 'N/A'):.2f}, "
+                           f"energy={getattr(af, 'energy', 'N/A'):.2f}, tempo={getattr(af, 'tempo', 'N/A')}")
+            else:
+                # Fallback to flat structure
+                logger.info(f"🔍 [SMART_SEARCH] Audio features (flat): valence={getattr(mood_params, 'valence', 'N/A'):.2f}, "
+                           f"energy={getattr(mood_params, 'energy', 'N/A'):.2f}, tempo={getattr(mood_params, 'tempo', 'N/A')}")
+            
+            # Log context and preferences
+            if hasattr(mood_params, 'context'):
+                ctx = mood_params.context
+                logger.info(f"🔍 [SMART_SEARCH] Context: mood_tags={getattr(ctx, 'mood_tags', [])}, "
+                           f"activity={getattr(ctx, 'activity', 'N/A')}, time_of_day={getattr(ctx, 'time_of_day', 'N/A')}")
+            else:
+                logger.info(f"🔍 [SMART_SEARCH] Context (flat): mood_tags={getattr(mood_params, 'mood_tags', [])}, "
+                           f"activity={getattr(mood_params, 'activity', 'N/A')}")
+            
+            if hasattr(mood_params, 'preferences'):
+                prefs = mood_params.preferences
+                if hasattr(prefs, 'genres'):
+                    genres = prefs.genres
+                    logger.info(f"🔍 [SMART_SEARCH] Genres: primary={getattr(genres, 'primary', [])}, "
+                               f"secondary={getattr(genres, 'secondary', [])}, exclude={getattr(genres, 'exclude', [])}")
+                else:
+                    logger.info(f"🔍 [SMART_SEARCH] Genres (flat prefs): primary={getattr(prefs, 'primary_genres', [])}")
+            else:
+                logger.info(f"🔍 [SMART_SEARCH] Genres (flat): primary={getattr(mood_params, 'primary_genres', [])}, "
+                           f"secondary={getattr(mood_params, 'secondary_genres', [])}")
+        except Exception as e:
+            logger.warning(f"🔍 [SMART_SEARCH] Could not log MoodParameters details: {e}")
+        
         if self.service == "spotify" and self.spotify_client:
+            # 🔍 DIAGNOSTIC LOGGING: Spotify client status
+            logger.info(f"🔍 [SMART_SEARCH] Spotify client status: authenticated={bool(self.spotify_client.client)}")
             try:
-                logger.info(f"Using SmartSearchStrategy for enhanced mood-based discovery")
+                # Test Spotify connection
+                if hasattr(self.spotify_client, 'client') and self.spotify_client.client:
+                    user_profile = self.spotify_client.client.current_user()
+                    logger.info(f"🔍 [SMART_SEARCH] Spotify user: {user_profile.get('display_name', 'Unknown')} "
+                               f"({user_profile.get('id', 'Unknown')})")
+                else:
+                    logger.warning(f"🔍 [SMART_SEARCH] No Spotify client.client available")
+            except Exception as e:
+                logger.warning(f"🔍 [SMART_SEARCH] Could not verify Spotify connection: {e}")
+            
+            try:
+                logger.info(f"🔍 [SMART_SEARCH] Initializing SmartSearchStrategy...")
                 
                 # Create smart search strategy
                 smart_search = create_smart_search_strategy(self.spotify_client)
+                logger.info(f"🔍 [SMART_SEARCH] SmartSearchStrategy created successfully")
                 
                 # Use smart search to find tracks (gets ~200 candidates)
-                candidate_tracks = smart_search.search_mood_tracks(mood_params, total_limit=limit * 10)
+                search_limit = limit * 10
+                logger.info(f"🔍 [SMART_SEARCH] Requesting {search_limit} candidate tracks from SmartSearchStrategy")
+                
+                candidate_tracks = smart_search.search_mood_tracks(mood_params, total_limit=search_limit)
+                
+                # 🔍 DIAGNOSTIC LOGGING: Search results
+                logger.info(f"🔍 [SMART_SEARCH] SmartSearchStrategy returned {len(candidate_tracks)} candidate tracks")
                 
                 if not candidate_tracks:
-                    logger.warning("SmartSearchStrategy returned no tracks")
+                    logger.error(f"❌ [SMART_SEARCH] CRITICAL: SmartSearchStrategy returned 0 tracks!")
+                    logger.error(f"❌ [SMART_SEARCH] This indicates a problem with:")
+                    logger.error(f"❌ [SMART_SEARCH] - Spotify API connectivity")
+                    logger.error(f"❌ [SMART_SEARCH] - Search parameters/genres")
+                    logger.error(f"❌ [SMART_SEARCH] - All 4 search strategies failed")
                     return []
                 
                 # Get analytics about search results
                 analytics = smart_search.get_search_analytics(candidate_tracks)
-                logger.info(f"Smart search analytics: {analytics['total_tracks']} tracks from "
+                logger.info(f"🔍 [SMART_SEARCH] Search analytics: {analytics['total_tracks']} tracks from "
                            f"{len(analytics['by_method'])} methods, {analytics['unique_artists']} unique artists")
                 
-                # Filter out tracks user already knows
+                # 🔍 DIAGNOSTIC LOGGING: Detailed breakdown by method
+                logger.info(f"🔍 [SMART_SEARCH] Search methods breakdown:")
+                for method, count in analytics['by_method'].items():
+                    logger.info(f"🔍 [SMART_SEARCH]   - {method}: {count} tracks")
+                
+                logger.info(f"🔍 [SMART_SEARCH] Popularity range: {analytics['popularity_stats']['min']}-{analytics['popularity_stats']['max']} "
+                           f"(avg: {analytics['popularity_stats']['avg']:.1f})")
+                
+                # 🔍 DIAGNOSTIC LOGGING: Filter out tracks user already knows
+                logger.info(f"🔍 [SMART_SEARCH] Starting user track filtering...")
                 user_liked_ids = set()
                 try:
                     liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
                     user_liked_ids = {track['id'] for track in liked_tracks}
-                    logger.info(f"Excluding {len(user_liked_ids)} user's known tracks from smart search results")
+                    logger.info(f"🔍 [SMART_SEARCH] Found {len(user_liked_ids)} user's liked tracks to exclude")
                 except Exception as e:
-                    logger.warning(f"Could not get user's liked tracks for filtering: {e}")
+                    logger.warning(f"🔍 [SMART_SEARCH] Could not get user's liked tracks for filtering: {e}")
                 
                 # Filter out known tracks
                 discovery_candidates = []
+                excluded_count = 0
                 for track in candidate_tracks:
                     if track['id'] not in user_liked_ids:
                         discovery_candidates.append(track)
+                    else:
+                        excluded_count += 1
                 
-                logger.info(f"Smart search found {len(candidate_tracks)} candidates, "
-                           f"{len(discovery_candidates)} are new discoveries")
+                logger.info(f"🔍 [SMART_SEARCH] Track filtering results:")
+                logger.info(f"🔍 [SMART_SEARCH]   - Initial candidates: {len(candidate_tracks)}")
+                logger.info(f"🔍 [SMART_SEARCH]   - Excluded (already known): {excluded_count}")
+                logger.info(f"🔍 [SMART_SEARCH]   - New discoveries: {len(discovery_candidates)}")
                 
-                # Apply smart scoring and filtering
+                if not discovery_candidates:
+                    logger.error(f"❌ [SMART_SEARCH] CRITICAL: All {len(candidate_tracks)} tracks were already known by user!")
+                    logger.error(f"❌ [SMART_SEARCH] Recommendation: increase search diversity or check user's music library size")
+                    return []
+                
+                # 🔍 DIAGNOSTIC LOGGING: Apply smart scoring and filtering
+                logger.info(f"🔍 [SMART_SEARCH] Starting audio features enrichment for {len(discovery_candidates)} tracks...")
                 try:
                     # Enrich with audio features
                     enricher = SpotifyTrackEnricher(self.spotify_client)
                     enriched_candidates = enricher.enrich_tracks_with_audio_features(discovery_candidates)
                     
+                    logger.info(f"🔍 [SMART_SEARCH] Audio features enrichment completed: {len(enriched_candidates)} tracks enriched")
+                    
+                    # Check how many tracks have audio features
+                    tracks_with_features = sum(1 for track in enriched_candidates if track.get('audio_features'))
+                    logger.info(f"🔍 [SMART_SEARCH] Tracks with audio features: {tracks_with_features}/{len(enriched_candidates)}")
+                    
+                    if tracks_with_features == 0:
+                        logger.error(f"❌ [SMART_SEARCH] CRITICAL: No tracks have audio features after enrichment!")
+                        logger.error(f"❌ [SMART_SEARCH] This may indicate Spotify API issues with audio features endpoint")
+                    
                     # Apply intelligent filtering
+                    logger.info(f"🔍 [SMART_SEARCH] Applying SmartTrackFilter with threshold 0.15...")
                     smart_filter = SmartTrackFilter(default_scorer)
                     filtered_tracks = smart_filter.filter_and_rank_tracks(
                         tracks=enriched_candidates,
@@ -350,41 +494,65 @@ class PlaylistBuilder:
                         min_score_threshold=0.15  # Lower threshold for smart search results
                     )
                     
+                    logger.info(f"🔍 [SMART_SEARCH] SmartTrackFilter results: {len(filtered_tracks)} tracks passed filtering")
+                    
+                    if not filtered_tracks:
+                        logger.error(f"❌ [SMART_SEARCH] CRITICAL: SmartTrackFilter rejected all tracks!")
+                        logger.error(f"❌ [SMART_SEARCH] This may indicate:")
+                        logger.error(f"❌ [SMART_SEARCH] - Threshold too high (0.15)")
+                        logger.error(f"❌ [SMART_SEARCH] - Poor mood parameter matching")
+                        logger.error(f"❌ [SMART_SEARCH] - Missing audio features data")
+                        return []
+                    
                     final_tracks = [track for track, score in filtered_tracks]
                     
-                    # Log search method breakdown
+                    # 🔍 DIAGNOSTIC LOGGING: Final results breakdown
                     method_breakdown = defaultdict(int)
-                    for track in final_tracks:
+                    score_breakdown = []
+                    for track, score in filtered_tracks[:10]:  # Log top 10 scores
                         method = track.get('discovery_method', 'unknown')
                         method_breakdown[method] += 1
+                        score_breakdown.append(f"{score:.3f}")
                     
-                    logger.info(f"Smart search final selection: {len(final_tracks)} tracks")
-                    logger.info(f"Discovery methods: {dict(method_breakdown)}")
+                    logger.info(f"🔍 [SMART_SEARCH] Final selection completed: {len(final_tracks)} tracks")
+                    logger.info(f"🔍 [SMART_SEARCH] Discovery methods breakdown: {dict(method_breakdown)}")
+                    logger.info(f"🔍 [SMART_SEARCH] Top 10 scores: {', '.join(score_breakdown)}")
+                    
+                    final_count = min(len(final_tracks), limit * 2)
+                    logger.info(f"🔍 [SMART_SEARCH] Returning {final_count} tracks (target: {limit * 2})")
                     
                     return final_tracks[:limit * 2]  # Return 2x for final selection
                     
                 except Exception as e:
-                    logger.error(f"Error in smart search filtering: {e}")
+                    logger.error(f"❌ [SMART_SEARCH] Error in smart search filtering: {e}")
+                    logger.info(f"🔍 [SMART_SEARCH] Falling back to raw discovery candidates: {len(discovery_candidates)} tracks")
                     # Return raw smart search results as fallback
+                    fallback_count = min(len(discovery_candidates), limit * 2)
+                    logger.info(f"🔍 [SMART_SEARCH] Returning {fallback_count} unfiltered tracks as fallback")
                     return discovery_candidates[:limit * 2]
                 
             except Exception as e:
-                logger.error(f"Error in smart search strategy: {e}")
+                logger.error(f"❌ [SMART_SEARCH] Critical error in smart search strategy: {e}")
+                logger.info(f"🔍 [SMART_SEARCH] Falling back to original search method...")
                 # Fallback to original method
-                logger.info("Falling back to original search method")
-                return self._get_mood_based_tracks(mood_params, limit)
+                fallback_tracks = self._get_mood_based_tracks(mood_params, limit)
+                logger.info(f"🔍 [SMART_SEARCH] Original method returned {len(fallback_tracks)} tracks")
+                return fallback_tracks
         
         elif self.service == "apple_music":
+            logger.info(f"🔍 [APPLE_MUSIC] Starting Apple Music mood-based discovery for user {self.user_id}")
             try:
                 mood_tracks = apple_music_client.search_tracks_by_mood(mood_params, limit=limit * 2)
-                logger.info(f"Found {len(mood_tracks)} Apple Music mood-based tracks for user {self.user_id}")
+                logger.info(f"🔍 [APPLE_MUSIC] Apple Music search completed: {len(mood_tracks)} tracks found")
                 return mood_tracks
             except Exception as e:
-                logger.error(f"Error getting Apple Music tracks: {e}")
+                logger.error(f"❌ [APPLE_MUSIC] Error getting Apple Music tracks: {e}")
                 return []
         
         else:
-            logger.warning(f"Smart search not available for service={self.service}, spotify_client={self.spotify_client}")
+            logger.warning(f"❌ [SMART_SEARCH] Smart search not available for service={self.service}")
+            logger.warning(f"❌ [SMART_SEARCH] Spotify client available: {bool(self.spotify_client)}")
+            logger.warning(f"❌ [SMART_SEARCH] Supported services: spotify, apple_music")
             return []
     
     def _combine_and_select_tracks(
