@@ -298,85 +298,82 @@ class PlaylistBuilder:
         Returns:
             List of tracks found through smart search strategies
         """
-        if self.service != "spotify" or not self.spotify_client:
-            logger.warning("Smart search only available for Spotify service")
-            return []
+        if self.service == "spotify" and self.spotify_client:
+            try:
+                logger.info(f"Using SmartSearchStrategy for enhanced mood-based discovery")
+                
+                # Create smart search strategy
+                smart_search = create_smart_search_strategy(self.spotify_client)
+                
+                # Use smart search to find tracks (gets ~200 candidates)
+                candidate_tracks = smart_search.search_mood_tracks(mood_params, total_limit=limit * 10)
+                
+                if not candidate_tracks:
+                    logger.warning("SmartSearchStrategy returned no tracks")
+                    return []
+                
+                # Get analytics about search results
+                analytics = smart_search.get_search_analytics(candidate_tracks)
+                logger.info(f"Smart search analytics: {analytics['total_tracks']} tracks from "
+                           f"{len(analytics['by_method'])} methods, {analytics['unique_artists']} unique artists")
+                
+                # Filter out tracks user already knows
+                user_liked_ids = set()
+                try:
+                    liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
+                    user_liked_ids = {track['id'] for track in liked_tracks}
+                    logger.info(f"Excluding {len(user_liked_ids)} user's known tracks from smart search results")
+                except Exception as e:
+                    logger.warning(f"Could not get user's liked tracks for filtering: {e}")
+                
+                # Filter out known tracks
+                discovery_candidates = []
+                for track in candidate_tracks:
+                    if track['id'] not in user_liked_ids:
+                        discovery_candidates.append(track)
+                
+                logger.info(f"Smart search found {len(candidate_tracks)} candidates, "
+                           f"{len(discovery_candidates)} are new discoveries")
+                
+                # Apply smart scoring and filtering
+                try:
+                    # Enrich with audio features
+                    enricher = SpotifyTrackEnricher(self.spotify_client)
+                    enriched_candidates = enricher.enrich_tracks_with_audio_features(discovery_candidates)
+                    
+                    # Apply intelligent filtering
+                    smart_filter = SmartTrackFilter(default_scorer)
+                    filtered_tracks = smart_filter.filter_and_rank_tracks(
+                        tracks=enriched_candidates,
+                        mood_params=mood_params,
+                        target_count=limit * 2,
+                        min_score_threshold=0.15  # Lower threshold for smart search results
+                    )
+                    
+                    final_tracks = [track for track, score in filtered_tracks]
+                    
+                    # Log search method breakdown
+                    method_breakdown = defaultdict(int)
+                    for track in final_tracks:
+                        method = track.get('discovery_method', 'unknown')
+                        method_breakdown[method] += 1
+                    
+                    logger.info(f"Smart search final selection: {len(final_tracks)} tracks")
+                    logger.info(f"Discovery methods: {dict(method_breakdown)}")
+                    
+                    return final_tracks[:limit * 2]  # Return 2x for final selection
+                    
+                except Exception as e:
+                    logger.error(f"Error in smart search filtering: {e}")
+                    # Return raw smart search results as fallback
+                    return discovery_candidates[:limit * 2]
+                
+            except Exception as e:
+                logger.error(f"Error in smart search strategy: {e}")
+                # Fallback to original method
+                logger.info("Falling back to original search method")
+                return self._get_mood_based_tracks(mood_params, limit)
         
-        try:
-            logger.info(f"Using SmartSearchStrategy for enhanced mood-based discovery")
-            
-            # Create smart search strategy
-            smart_search = create_smart_search_strategy(self.spotify_client)
-            
-            # Use smart search to find tracks (gets ~200 candidates)
-            candidate_tracks = smart_search.search_mood_tracks(mood_params, total_limit=limit * 10)
-            
-            if not candidate_tracks:
-                logger.warning("SmartSearchStrategy returned no tracks")
-                return []
-            
-            # Get analytics about search results
-            analytics = smart_search.get_search_analytics(candidate_tracks)
-            logger.info(f"Smart search analytics: {analytics['total_tracks']} tracks from "
-                       f"{len(analytics['by_method'])} methods, {analytics['unique_artists']} unique artists")
-            
-            # Filter out tracks user already knows
-            user_liked_ids = set()
-            try:
-                liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
-                user_liked_ids = {track['id'] for track in liked_tracks}
-                logger.info(f"Excluding {len(user_liked_ids)} user's known tracks from smart search results")
-            except Exception as e:
-                logger.warning(f"Could not get user's liked tracks for filtering: {e}")
-            
-            # Filter out known tracks
-            discovery_candidates = []
-            for track in candidate_tracks:
-                if track['id'] not in user_liked_ids:
-                    discovery_candidates.append(track)
-            
-            logger.info(f"Smart search found {len(candidate_tracks)} candidates, "
-                       f"{len(discovery_candidates)} are new discoveries")
-            
-            # Apply smart scoring and filtering
-            try:
-                # Enrich with audio features
-                enricher = SpotifyTrackEnricher(self.spotify_client)
-                enriched_candidates = enricher.enrich_tracks_with_audio_features(discovery_candidates)
-                
-                # Apply intelligent filtering
-                smart_filter = SmartTrackFilter(default_scorer)
-                filtered_tracks = smart_filter.filter_and_rank_tracks(
-                    tracks=enriched_candidates,
-                    mood_params=mood_params,
-                    target_count=limit * 2,
-                    min_score_threshold=0.15  # Lower threshold for smart search results
-                )
-                
-                final_tracks = [track for track, score in filtered_tracks]
-                
-                # Log search method breakdown
-                method_breakdown = defaultdict(int)
-                for track in final_tracks:
-                    method = track.get('discovery_method', 'unknown')
-                    method_breakdown[method] += 1
-                
-                logger.info(f"Smart search final selection: {len(final_tracks)} tracks")
-                logger.info(f"Discovery methods: {dict(method_breakdown)}")
-                
-                return final_tracks[:limit * 2]  # Return 2x for final selection
-                
-            except Exception as e:
-                logger.error(f"Error in smart search filtering: {e}")
-                # Return raw smart search results as fallback
-                return discovery_candidates[:limit * 2]
-            
-        except Exception as e:
-            logger.error(f"Error in smart search strategy: {e}")
-            # Fallback to original method
-            logger.info("Falling back to original search method")
-            return self._get_mood_based_tracks(mood_params, limit)
-    
         elif self.service == "apple_music":
             try:
                 mood_tracks = apple_music_client.search_tracks_by_mood(mood_params, limit=limit * 2)
@@ -386,8 +383,9 @@ class PlaylistBuilder:
                 logger.error(f"Error getting Apple Music tracks: {e}")
                 return []
         
-        logger.warning(f"No mood tracks found - service={self.service}, spotify_client={self.spotify_client}")
-        return []
+        else:
+            logger.warning(f"Smart search not available for service={self.service}, spotify_client={self.spotify_client}")
+            return []
     
     def _combine_and_select_tracks(
         self,
