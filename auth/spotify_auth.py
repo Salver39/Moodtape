@@ -625,6 +625,126 @@ class SpotifyClient:
         except SpotifyException as e:
             logger.error(f"Error fetching audio features for user {self.user_id}: {e}")
             return [None] * len(track_ids)  # Return None placeholders
+    
+    def diagnose_spotify_permissions(self, user_id: int):
+        """
+        Диагностика доступных разрешений Spotify для выявления проблем с API.
+        
+        Args:
+            user_id: ID пользователя для диагностики
+        """
+        logger.info(f"🔍 [SPOTIFY_DIAG] Starting permission diagnosis for user {user_id}")
+        
+        if not self.client:
+            logger.error(f"❌ [SPOTIFY_DIAG] No Spotify client available for user {user_id}")
+            return
+        
+        try:
+            # 1. Проверяем базовый доступ к профилю
+            try:
+                user_profile = self.client.current_user()
+                logger.info(f"✅ [SPOTIFY_DIAG] User profile access: OK - {user_profile.get('id', 'unknown')} ({user_profile.get('display_name', 'No Name')})")
+                logger.info(f"🔍 [SPOTIFY_DIAG] User country: {user_profile.get('country', 'unknown')}, followers: {user_profile.get('followers', {}).get('total', 0)}")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] User profile access: FAILED - {e}")
+                return  # If basic profile fails, no point continuing
+            
+            # 2. Проверяем доступ к liked tracks
+            try:
+                liked = self.client.current_user_saved_tracks(limit=1)
+                logger.info(f"✅ [SPOTIFY_DIAG] Liked tracks access: OK - {liked.get('total', 0)} total tracks")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Liked tracks access: FAILED - {e}")
+            
+            # 3. Проверяем доступ к top tracks
+            try:
+                top_tracks = self.client.current_user_top_tracks(limit=1)
+                logger.info(f"✅ [SPOTIFY_DIAG] Top tracks access: OK - {len(top_tracks.get('items', []))} tracks")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Top tracks access: FAILED - {e}")
+            
+            # 4. Проверяем доступ к top artists
+            try:
+                top_artists = self.client.current_user_top_artists(limit=1)
+                logger.info(f"✅ [SPOTIFY_DIAG] Top artists access: OK - {len(top_artists.get('items', []))} artists")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Top artists access: FAILED - {e}")
+            
+            # 5. Проверяем доступ к audio features - КРИТИЧЕСКАЯ ПРОВЕРКА
+            try:
+                # Берем track ID из liked треков
+                liked = self.client.current_user_saved_tracks(limit=1)
+                if liked.get('items'):
+                    track_id = liked['items'][0]['track']['id']
+                    track_name = liked['items'][0]['track']['name']
+                    logger.info(f"🔍 [SPOTIFY_DIAG] Testing audio features with track: '{track_name}' ({track_id})")
+                    
+                    features = self.client.audio_features([track_id])
+                    if features and features[0]:
+                        logger.info(f"✅ [SPOTIFY_DIAG] Audio features access: OK - valence={features[0].get('valence', 'N/A'):.2f}")
+                    else:
+                        logger.warning(f"⚠️ [SPOTIFY_DIAG] Audio features returned empty result for track {track_id}")
+                else:
+                    logger.warning("⚠️ [SPOTIFY_DIAG] No liked tracks to test audio features")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Audio features access: FAILED - {e}")
+                logger.error(f"❌ [SPOTIFY_DIAG] ERROR TYPE: {type(e).__name__}")
+                logger.error(f"❌ [SPOTIFY_DIAG] This is the root cause of playlist creation failure!")
+                
+                # Check if it's a 403 error specifically
+                error_str = str(e).lower()
+                if "403" in error_str or "forbidden" in error_str:
+                    logger.error(f"❌ [SPOTIFY_DIAG] CONFIRMED: HTTP 403 Forbidden on audio_features API")
+                    logger.error(f"❌ [SPOTIFY_DIAG] SOLUTION: PersonalizedPlaylistEngine fallback should activate")
+            
+            # 6. Проверяем доступ к playlist creation
+            try:
+                # Тестовое создание приватного плейлиста
+                test_playlist = self.client.user_playlist_create(
+                    user_profile['id'], 
+                    "🔍 Test Playlist DELETE ME", 
+                    public=False,
+                    description="Test playlist for permissions diagnosis - auto-delete"
+                )
+                logger.info(f"✅ [SPOTIFY_DIAG] Playlist creation: OK - {test_playlist.get('id')}")
+                
+                # Удаляем тестовый плейлист
+                self.client.current_user_unfollow_playlist(test_playlist['id'])
+                logger.info(f"✅ [SPOTIFY_DIAG] Playlist deletion: OK")
+                
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Playlist creation: FAILED - {e}")
+            
+            # 7. Проверяем Recommendations API
+            try:
+                recs = self.client.recommendations(seed_genres=['pop'], limit=1)
+                tracks_count = len(recs.get('tracks', []))
+                logger.info(f"✅ [SPOTIFY_DIAG] Recommendations API: OK - {tracks_count} tracks")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Recommendations API: FAILED - {e}")
+            
+            # 8. Проверяем Search API
+            try:
+                search_results = self.client.search(q='genre:pop', type='track', limit=1)
+                tracks_count = len(search_results.get('tracks', {}).get('items', []))
+                logger.info(f"✅ [SPOTIFY_DIAG] Search API: OK - {tracks_count} tracks")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] Search API: FAILED - {e}")
+            
+            # 9. Проверяем доступ к плейлистам пользователя
+            try:
+                playlists = self.client.current_user_playlists(limit=1)
+                playlists_count = len(playlists.get('items', []))
+                logger.info(f"✅ [SPOTIFY_DIAG] User playlists access: OK - {playlists_count} playlists")
+            except Exception as e:
+                logger.error(f"❌ [SPOTIFY_DIAG] User playlists access: FAILED - {e}")
+            
+            logger.info("🔍 [SPOTIFY_DIAG] Diagnosis completed - check logs above for any FAILED items")
+            
+        except Exception as e:
+            logger.error(f"❌ [SPOTIFY_DIAG] Critical error in diagnosis: {e}")
+            import traceback
+            logger.error(f"❌ [SPOTIFY_DIAG] Traceback: {traceback.format_exc()}")
 
 
 # Global Spotify auth instance

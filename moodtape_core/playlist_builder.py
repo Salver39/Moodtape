@@ -84,6 +84,14 @@ class PlaylistBuilder:
             logger.error(f"Service {self.service} not available for user {self.user_id}")
             return None
         
+        # 🔍 DIAGNOSTIC: Check Spotify permissions before playlist creation
+        if self.service == "spotify" and self.spotify_client:
+            logger.info(f"🔍 [PLAYLIST_BUILD] Running Spotify permissions diagnosis...")
+            try:
+                self.spotify_client.diagnose_spotify_permissions(self.user_id)
+            except Exception as e:
+                logger.warning(f"⚠️ [PLAYLIST_BUILD] Diagnosis failed: {e}")
+        
         try:
             # Generate unique query ID
             query_id = str(uuid.uuid4())
