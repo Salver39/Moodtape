@@ -9,6 +9,11 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
 
+
+class AudioFeaturesUnavailableError(Exception):
+    """Exception when audio_features API is unavailable (403)."""
+    pass
+
 from moodtape_core.gpt_parser import MoodParameters
 from moodtape_core.improved_scoring import (
     ImprovedTrackScorer, SmartTrackFilter, SpotifyTrackEnricher, MoodPlaylistBuilder,
@@ -260,44 +265,42 @@ class PlaylistBuilder:
     
     def _get_mood_based_tracks(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """Get tracks that match the mood parameters with intelligent filtering."""
-        # 🔍 DIAGNOSTIC LOGGING: Original search method
-        logger.info(f"🔍 [ORIGINAL_SEARCH] Starting original mood-based track search for user {self.user_id}")
-        logger.info(f"🔍 [ORIGINAL_SEARCH] Target limit: {limit}, Service: {self.service}")
+        logger.info(f"🔍 [MOOD_SEARCH] Starting mood-based track search for user {self.user_id}")
+        logger.info(f"🔍 [MOOD_SEARCH] Target limit: {limit}, Service: {self.service}")
         
         if self.service == "spotify" and self.spotify_client:
-            logger.info(f"🔍 [ORIGINAL_SEARCH] Using Spotify original search method")
-            
-            # Try original audio_features-based method first
             try:
-                return self._original_mood_search_with_audio_features(mood_params, limit)
-            except Exception as e:
+                # Попытка audio_features поиска
+                logger.info(f"🔍 [MOOD_SEARCH] Trying audio_features method")
+                return self._audio_features_search(mood_params, limit)
+                
+            except (AudioFeaturesUnavailableError, Exception) as e:
                 error_str = str(e).lower()
                 # Check for audio_features related errors (HTTP 403, permission errors, etc.)
-                if any(keyword in error_str for keyword in ['403', 'audio', 'forbidden', 'permission', 'unauthorized']):
-                    logger.warning(f"⚠️ [ORIGINAL_SEARCH] Audio features unavailable: {e}")
-                    logger.info(f"🔄 [ORIGINAL_SEARCH] Switching to personalized engine without audio_features")
-                    return self._get_personalized_tracks_fallback(mood_params, limit)
+                if any(keyword in error_str for keyword in ['403', 'audio', 'forbidden', 'permission', 'unauthorized']) or isinstance(e, AudioFeaturesUnavailableError):
+                    logger.warning(f"❌ [MOOD_SEARCH] Audio features unavailable (403), switching to personalized engine: {e}")
+                    return self._personalized_fallback_search(mood_params, limit)
                 else:
-                    # Re-raise other types of errors
+                    logger.error(f"❌ [MOOD_SEARCH] Unexpected error in mood search: {e}")
                     raise e
         
         elif self.service == "apple_music":
             # Apple Music doesn't have audio_features, so use direct approach
-            logger.info(f"🔍 [ORIGINAL_SEARCH] Using Apple Music direct search")
+            logger.info(f"🔍 [MOOD_SEARCH] Using Apple Music direct search")
             try:
                 mood_tracks = apple_music_client.search_tracks_by_mood(mood_params, limit=limit * 2)
-                logger.info(f"🔍 [ORIGINAL_SEARCH] Apple Music search returned {len(mood_tracks)} tracks")
+                logger.info(f"🔍 [MOOD_SEARCH] Apple Music search returned {len(mood_tracks)} tracks")
                 return mood_tracks
             except Exception as e:
-                logger.error(f"❌ [ORIGINAL_SEARCH] Error getting Apple Music tracks: {e}")
+                logger.error(f"❌ [MOOD_SEARCH] Error getting Apple Music tracks: {e}")
                 return []
         
         else:
-            logger.warning(f"❌ [ORIGINAL_SEARCH] Unsupported service: {self.service}")
+            logger.warning(f"❌ [MOOD_SEARCH] Unsupported service: {self.service}")
             return []
             
-    def _original_mood_search_with_audio_features(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
-        """Original mood search method that relies on audio_features API."""
+    def _audio_features_search(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
+        """Audio features-based search method (may throw AudioFeaturesUnavailableError on 403)."""
         logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Starting audio_features-based search")
         
         # Get user's known tracks to exclude them from discovery
@@ -342,9 +345,14 @@ class PlaylistBuilder:
             enriched_candidates = self._enrich_tracks_with_audio_features(discovery_candidates)
             logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Enriched {len(enriched_candidates)} tracks with audio features")
         except Exception as e:
-            logger.warning(f"🔍 [AUDIO_FEATURES_SEARCH] Failed to enrich tracks with audio features: {e}")
-            # This could be the audio_features error - re-raise for fallback
-            raise e
+            error_str = str(e).lower()
+            if "403" in error_str or "forbidden" in error_str:
+                logger.error(f"❌ [AUDIO_FEATURES_SEARCH] 403 Forbidden: audio_features API unavailable - {e}")
+                raise AudioFeaturesUnavailableError("Audio features API returned 403") from e
+            else:
+                logger.warning(f"🔍 [AUDIO_FEATURES_SEARCH] Failed to enrich tracks with audio features: {e}")
+                # This could be another audio_features error - re-raise for fallback
+                raise e
         
         # Apply intelligent filtering using SmartTrackFilter
         try:
@@ -375,9 +383,9 @@ class PlaylistBuilder:
             logger.info("🔍 [AUDIO_FEATURES_SEARCH] Falling back to simple track selection")
             return discovery_candidates[:limit * 2]
     
-    def _get_personalized_tracks_fallback(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
+    def _personalized_fallback_search(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """
-        Fallback method using PersonalizedPlaylistEngine when audio_features API is unavailable.
+        Fallback к персонализированному поиску БЕЗ audio_features.
         
         Args:
             mood_params: Mood parameters for playlist creation
@@ -386,31 +394,33 @@ class PlaylistBuilder:
         Returns:
             List of tracks found through personalized recommendations
         """
-        logger.info(f"🔄 [PERSONALIZED_FALLBACK] Starting personalized fallback for user {self.user_id}")
-        logger.info(f"🔄 [PERSONALIZED_FALLBACK] Target limit: {limit}")
-        
-        if not self.personalized_engine:
-            logger.error(f"❌ [PERSONALIZED_FALLBACK] No personalized engine available!")
-            return []
+        logger.info(f"🔍 [PERSONALIZED_SEARCH] Using PersonalizedPlaylistEngine fallback for user {self.user_id}")
+        logger.info(f"🔍 [PERSONALIZED_SEARCH] Target limit: {limit}")
         
         try:
-            # Use PersonalizedPlaylistEngine to create playlist without audio_features
-            personalized_tracks = self.personalized_engine.create_personalized_playlist(
+            # Import here to avoid circular dependencies
+            from moodtape_core.personalized_engine import PersonalizedPlaylistEngine
+            
+            # Create personalized engine instance
+            personalized_engine = PersonalizedPlaylistEngine(self.spotify_client)
+            
+            # Создаем персонализированный плейлист
+            tracks = personalized_engine.create_personalized_playlist(
                 user_id=str(self.user_id),
                 mood_params=mood_params,
-                target_length=limit * 2  # Get more tracks for final selection
+                target_length=limit
             )
             
-            logger.info(f"✅ [PERSONALIZED_FALLBACK] Successfully generated {len(personalized_tracks)} personalized tracks")
+            logger.info(f"🔍 [PERSONALIZED_SEARCH] Found {len(tracks)} personalized tracks")
             
             # Add discovery method tag for tracking
-            for track in personalized_tracks:
+            for track in tracks:
                 track['discovery_method'] = 'personalized_fallback'
             
-            return personalized_tracks
+            return tracks
             
         except Exception as e:
-            logger.error(f"❌ [PERSONALIZED_FALLBACK] Error in personalized fallback: {e}")
+            logger.error(f"❌ [PERSONALIZED_SEARCH] Error in personalized fallback: {e}")
             return []
     
     def _get_mood_based_tracks_with_smart_search(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
@@ -600,12 +610,17 @@ class PlaylistBuilder:
                     return final_tracks[:limit * 2]  # Return 2x for final selection
                     
                 except Exception as e:
-                    logger.error(f"❌ [SMART_SEARCH] Error in smart search filtering: {e}")
-                    logger.info(f"🔍 [SMART_SEARCH] Falling back to raw discovery candidates: {len(discovery_candidates)} tracks")
-                    # Return raw smart search results as fallback
-                    fallback_count = min(len(discovery_candidates), limit * 2)
-                    logger.info(f"🔍 [SMART_SEARCH] Returning {fallback_count} unfiltered tracks as fallback")
-                    return discovery_candidates[:limit * 2]
+                    error_str = str(e).lower()
+                    if "403" in error_str or "forbidden" in error_str:
+                        logger.error(f"❌ [SMART_SEARCH] 403 Forbidden: audio_features API unavailable - {e}")
+                        raise AudioFeaturesUnavailableError("Audio features API returned 403 in smart search") from e
+                    else:
+                        logger.error(f"❌ [SMART_SEARCH] Error in smart search filtering: {e}")
+                        logger.info(f"🔍 [SMART_SEARCH] Falling back to raw discovery candidates: {len(discovery_candidates)} tracks")
+                        # Return raw smart search results as fallback
+                        fallback_count = min(len(discovery_candidates), limit * 2)
+                        logger.info(f"🔍 [SMART_SEARCH] Returning {fallback_count} unfiltered tracks as fallback")
+                        return discovery_candidates[:limit * 2]
                 
             except Exception as e:
                 logger.error(f"❌ [SMART_SEARCH] Critical error in smart search strategy: {e}")
@@ -679,7 +694,16 @@ class PlaylistBuilder:
         # Fetch audio features for all tracks for improved scoring
         if self.service == "spotify" and self.spotify_client:
             logger.info("Fetching audio features for intelligent scoring...")
-            all_tracks = self._enrich_tracks_with_audio_features(all_tracks)
+            try:
+                all_tracks = self._enrich_tracks_with_audio_features(all_tracks)
+            except Exception as e:
+                error_str = str(e).lower()
+                if "403" in error_str or "forbidden" in error_str:
+                    logger.error(f"❌ [COMBINE_TRACKS] 403 Forbidden: audio_features API unavailable - {e}")
+                    raise AudioFeaturesUnavailableError("Audio features API returned 403 in track combination") from e
+                else:
+                    logger.warning(f"🔍 [COMBINE_TRACKS] Failed to fetch audio features, proceeding without: {e}")
+                    # Continue without audio features
         
         # Use improved scoring algorithm to rank all tracks
         logger.info("Applying improved mood scoring algorithm...")

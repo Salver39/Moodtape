@@ -491,7 +491,14 @@ class SpotifyTrackEnricher:
                             if features:  # Some tracks might not have audio features
                                 all_audio_features[track_id] = features
                 except Exception as e:
-                    self.logger.error(f"Error fetching audio features batch {i//batch_size + 1}: {e}")
+                    error_str = str(e).lower()
+                    if "403" in error_str or "forbidden" in error_str:
+                        self.logger.error(f"403 Forbidden: audio_features API unavailable in batch {i//batch_size + 1}: {e}")
+                        # Import here to avoid circular imports
+                        from moodtape_core.playlist_builder import AudioFeaturesUnavailableError
+                        raise AudioFeaturesUnavailableError("Audio features API returned 403 in SpotifyTrackEnricher") from e
+                    else:
+                        self.logger.error(f"Error fetching audio features batch {i//batch_size + 1}: {e}")
             
             self.logger.info(f"Retrieved audio features for {len(all_audio_features)} tracks")
             
@@ -519,8 +526,14 @@ class SpotifyTrackEnricher:
             return enriched_tracks
             
         except Exception as e:
-            self.logger.error(f"Error enriching tracks with audio features: {e}")
-            return tracks  # Return original tracks if enrichment fails
+            # Check if this is a 403 audio_features error that should be propagated
+            from moodtape_core.playlist_builder import AudioFeaturesUnavailableError
+            if isinstance(e, AudioFeaturesUnavailableError):
+                # Re-raise audio_features 403 errors for fallback handling
+                raise e
+            else:
+                self.logger.error(f"Error enriching tracks with audio features: {e}")
+                return tracks  # Return original tracks if enrichment fails
     
     def enrich_single_track(self, track: Dict[str, Any]) -> Dict[str, Any]:
         """
