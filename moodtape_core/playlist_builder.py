@@ -15,6 +15,7 @@ from moodtape_core.improved_scoring import (
     default_scorer, default_filter, default_enricher
 )
 from moodtape_core.smart_search import SmartSearchStrategy, create_smart_search_strategy
+from moodtape_core.personalized_engine import PersonalizedPlaylistEngine
 from auth.spotify_auth import SpotifyClient
 from auth.apple_auth import apple_music_client
 from utils.database import db_manager
@@ -41,9 +42,12 @@ class PlaylistBuilder:
         # Initialize music service client
         if service == "spotify":
             self.spotify_client = SpotifyClient(user_id)
+            # Initialize personalized engine for audio_features fallback
+            self.personalized_engine = PersonalizedPlaylistEngine(self.spotify_client)
         elif service == "apple_music":
             # Apple Music doesn't require user-specific initialization
             # We'll use the global apple_music_client
+            self.personalized_engine = None
             pass
     
     def is_service_available(self) -> bool:
@@ -263,79 +267,151 @@ class PlaylistBuilder:
         if self.service == "spotify" and self.spotify_client:
             logger.info(f"🔍 [ORIGINAL_SEARCH] Using Spotify original search method")
             
-            # Get user's known tracks to exclude them from discovery
-            user_liked_ids = set()
+            # Try original audio_features-based method first
             try:
-                liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
-                user_liked_ids = {track['id'] for track in liked_tracks}
-                logger.info(f"🔍 [ORIGINAL_SEARCH] Found {len(user_liked_ids)} user's liked tracks to exclude")
+                return self._original_mood_search_with_audio_features(mood_params, limit)
             except Exception as e:
-                logger.warning(f"🔍 [ORIGINAL_SEARCH] Could not get user's liked tracks for filtering: {e}")
-            
-            # Get a larger pool of mood-based tracks for intelligent filtering
-            search_limit = limit * 5  # Get 5x more tracks for better filtering
-            logger.info(f"🔍 [ORIGINAL_SEARCH] Searching for {search_limit} candidate tracks using traditional method")
-            
+                error_str = str(e).lower()
+                # Check for audio_features related errors (HTTP 403, permission errors, etc.)
+                if any(keyword in error_str for keyword in ['403', 'audio', 'forbidden', 'permission', 'unauthorized']):
+                    logger.warning(f"⚠️ [ORIGINAL_SEARCH] Audio features unavailable: {e}")
+                    logger.info(f"🔄 [ORIGINAL_SEARCH] Switching to personalized engine without audio_features")
+                    return self._get_personalized_tracks_fallback(mood_params, limit)
+                else:
+                    # Re-raise other types of errors
+                    raise e
+        
+        elif self.service == "apple_music":
+            # Apple Music doesn't have audio_features, so use direct approach
+            logger.info(f"🔍 [ORIGINAL_SEARCH] Using Apple Music direct search")
             try:
-                candidate_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=search_limit)
-                logger.info(f"🔍 [ORIGINAL_SEARCH] Traditional search returned {len(candidate_tracks)} candidate tracks")
+                mood_tracks = apple_music_client.search_tracks_by_mood(mood_params, limit=limit * 2)
+                logger.info(f"🔍 [ORIGINAL_SEARCH] Apple Music search returned {len(mood_tracks)} tracks")
+                return mood_tracks
             except Exception as e:
-                logger.error(f"❌ [ORIGINAL_SEARCH] Error in search_tracks_by_mood: {e}")
+                logger.error(f"❌ [ORIGINAL_SEARCH] Error getting Apple Music tracks: {e}")
                 return []
+        
+        else:
+            logger.warning(f"❌ [ORIGINAL_SEARCH] Unsupported service: {self.service}")
+            return []
             
-            if not candidate_tracks:
-                logger.error(f"❌ [ORIGINAL_SEARCH] CRITICAL: Traditional search returned 0 tracks!")
-                logger.error(f"❌ [ORIGINAL_SEARCH] This indicates fundamental Spotify API issues")
-                return []
+    def _original_mood_search_with_audio_features(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
+        """Original mood search method that relies on audio_features API."""
+        logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Starting audio_features-based search")
+        
+        # Get user's known tracks to exclude them from discovery
+        user_liked_ids = set()
+        try:
+            liked_tracks = self.spotify_client.get_user_liked_tracks(limit=50)
+            user_liked_ids = {track['id'] for track in liked_tracks}
+            logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Found {len(user_liked_ids)} user's liked tracks to exclude")
+        except Exception as e:
+            logger.warning(f"🔍 [AUDIO_FEATURES_SEARCH] Could not get user's liked tracks for filtering: {e}")
+        
+        # Get a larger pool of mood-based tracks for intelligent filtering
+        search_limit = limit * 5  # Get 5x more tracks for better filtering
+        logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Searching for {search_limit} candidate tracks using traditional method")
+        
+        try:
+            candidate_tracks = self.spotify_client.search_tracks_by_mood(mood_params, limit=search_limit)
+            logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Traditional search returned {len(candidate_tracks)} candidate tracks")
+        except Exception as e:
+            logger.error(f"❌ [AUDIO_FEATURES_SEARCH] Error in search_tracks_by_mood: {e}")
+            raise e  # Re-raise for fallback handling
+        
+        if not candidate_tracks:
+            logger.error(f"❌ [AUDIO_FEATURES_SEARCH] CRITICAL: Traditional search returned 0 tracks!")
+            logger.error(f"❌ [AUDIO_FEATURES_SEARCH] This indicates fundamental Spotify API issues")
+            return []
+        
+        # Filter out tracks user already knows
+        discovery_candidates = []
+        for track in candidate_tracks:
+            if track['id'] not in user_liked_ids:
+                discovery_candidates.append(track)
+        
+        logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Filtered to {len(discovery_candidates)} new discovery candidates")
+        
+        if not discovery_candidates:
+            logger.warning("🔍 [AUDIO_FEATURES_SEARCH] No new discovery tracks found after filtering known tracks")
+            return candidate_tracks[:limit * 2]  # Fallback to original tracks
+        
+        # Enrich candidates with audio features for intelligent filtering
+        try:
+            enriched_candidates = self._enrich_tracks_with_audio_features(discovery_candidates)
+            logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Enriched {len(enriched_candidates)} tracks with audio features")
+        except Exception as e:
+            logger.warning(f"🔍 [AUDIO_FEATURES_SEARCH] Failed to enrich tracks with audio features: {e}")
+            # This could be the audio_features error - re-raise for fallback
+            raise e
+        
+        # Apply intelligent filtering using SmartTrackFilter
+        try:
+            smart_filter = SmartTrackFilter(default_scorer)
+            filtered_tracks = smart_filter.filter_and_rank_tracks(
+                tracks=enriched_candidates,
+                mood_params=mood_params,
+                target_count=limit * 2,  # Get 2x more than needed for final selection
+                min_score_threshold=0.20  # Higher threshold for mood-only tracks
+            )
             
-            # Filter out tracks user already knows
-            discovery_candidates = []
-            for track in candidate_tracks:
-                if track['id'] not in user_liked_ids:
-                    discovery_candidates.append(track)
+            final_discovery_tracks = [track for track, score in filtered_tracks]
             
-            logger.info(f"Filtered to {len(discovery_candidates)} new discovery candidates")
+            logger.info(f"🔍 [AUDIO_FEATURES_SEARCH] Smart filtering selected {len(final_discovery_tracks)} high-quality mood tracks")
             
-            if not discovery_candidates:
-                logger.warning("No new discovery tracks found after filtering known tracks")
-                return candidate_tracks[:limit * 2]  # Fallback to original tracks
+            # Log top scoring tracks for debugging
+            if filtered_tracks:
+                logger.info("🔍 [AUDIO_FEATURES_SEARCH] Top mood-based tracks:")
+                for i, (track, score) in enumerate(filtered_tracks[:3]):
+                    artists = ', '.join([a.get('name', 'Unknown') for a in track.get('artists', [])])
+                    logger.info(f"🔍 [AUDIO_FEATURES_SEARCH]   {i+1}. '{track.get('name', 'Unknown')}' by {artists} (score: {score:.3f})")
             
-            # Enrich candidates with audio features for intelligent filtering
-            try:
-                enriched_candidates = self._enrich_tracks_with_audio_features(discovery_candidates)
-                logger.info(f"Enriched {len(enriched_candidates)} tracks with audio features")
-            except Exception as e:
-                logger.warning(f"Failed to enrich tracks with audio features: {e}")
-                enriched_candidates = discovery_candidates
+            return final_discovery_tracks
             
-            # Apply intelligent filtering using SmartTrackFilter
-            try:
-                smart_filter = SmartTrackFilter(default_scorer)
-                filtered_tracks = smart_filter.filter_and_rank_tracks(
-                    tracks=enriched_candidates,
-                    mood_params=mood_params,
-                    target_count=limit * 2,  # Get 2x more than needed for final selection
-                    min_score_threshold=0.20  # Higher threshold for mood-only tracks
-                )
-                
-                final_discovery_tracks = [track for track, score in filtered_tracks]
-                
-                logger.info(f"Smart filtering selected {len(final_discovery_tracks)} high-quality mood tracks")
-                
-                # Log top scoring tracks for debugging
-                if filtered_tracks:
-                    logger.info("Top mood-based tracks:")
-                    for i, (track, score) in enumerate(filtered_tracks[:3]):
-                        artists = ', '.join([a.get('name', 'Unknown') for a in track.get('artists', [])])
-                        logger.info(f"  {i+1}. '{track.get('name', 'Unknown')}' by {artists} (score: {score:.3f})")
-                
-                return final_discovery_tracks
-                
-            except Exception as e:
-                logger.error(f"Error in smart filtering: {e}")
-                # Fallback to simple filtering
-                logger.info("Falling back to simple track selection")
-                return discovery_candidates[:limit * 2]
+        except Exception as e:
+            logger.error(f"❌ [AUDIO_FEATURES_SEARCH] Error in smart filtering: {e}")
+            # Fallback to simple filtering
+            logger.info("🔍 [AUDIO_FEATURES_SEARCH] Falling back to simple track selection")
+            return discovery_candidates[:limit * 2]
+    
+    def _get_personalized_tracks_fallback(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
+        """
+        Fallback method using PersonalizedPlaylistEngine when audio_features API is unavailable.
+        
+        Args:
+            mood_params: Mood parameters for playlist creation
+            limit: Target number of tracks
+            
+        Returns:
+            List of tracks found through personalized recommendations
+        """
+        logger.info(f"🔄 [PERSONALIZED_FALLBACK] Starting personalized fallback for user {self.user_id}")
+        logger.info(f"🔄 [PERSONALIZED_FALLBACK] Target limit: {limit}")
+        
+        if not self.personalized_engine:
+            logger.error(f"❌ [PERSONALIZED_FALLBACK] No personalized engine available!")
+            return []
+        
+        try:
+            # Use PersonalizedPlaylistEngine to create playlist without audio_features
+            personalized_tracks = self.personalized_engine.create_personalized_playlist(
+                user_id=str(self.user_id),
+                mood_params=mood_params,
+                target_length=limit * 2  # Get more tracks for final selection
+            )
+            
+            logger.info(f"✅ [PERSONALIZED_FALLBACK] Successfully generated {len(personalized_tracks)} personalized tracks")
+            
+            # Add discovery method tag for tracking
+            for track in personalized_tracks:
+                track['discovery_method'] = 'personalized_fallback'
+            
+            return personalized_tracks
+            
+        except Exception as e:
+            logger.error(f"❌ [PERSONALIZED_FALLBACK] Error in personalized fallback: {e}")
+            return []
     
     def _get_mood_based_tracks_with_smart_search(self, mood_params: MoodParameters, limit: int) -> List[Dict[str, Any]]:
         """
