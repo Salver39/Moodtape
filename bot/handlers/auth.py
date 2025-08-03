@@ -8,7 +8,7 @@ from utils.i18n import get_text, user_sessions
 from utils.logger import get_logger
 from utils.database import db_manager
 from auth.spotify_auth import spotify_auth
-from auth.apple_auth import apple_music_client
+from auth.apple_auth import apple_music_client, APPLEMUSICPY_AVAILABLE
 from config.settings import settings
 
 logger = get_logger(__name__)
@@ -170,6 +170,21 @@ async def check_apple_music_availability(update: Update, context: ContextTypes.D
     # Save selected service
     user_sessions.set_session_data(user.id, "music_service", "apple_music")
     
+    # Check if Apple Music is available
+    if not APPLEMUSICPY_AVAILABLE:
+        if user_language == "ru":
+            message = "⚠️ Apple Music временно недоступен. Пожалуйста, используйте Spotify."
+        elif user_language == "es":
+            message = "⚠️ Apple Music no está disponible temporalmente. Por favor, usa Spotify."
+        else:
+            message = "⚠️ Apple Music is temporarily unavailable. Please use Spotify."
+        
+        await query.edit_message_text(
+            message,
+            parse_mode="HTML"
+        )
+        return
+    
     # Check if Apple Music is enabled and configured
     if not settings.MUSIC_SERVICES["apple_music"]["enabled"]:
         await query.edit_message_text(
@@ -307,7 +322,10 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     spotify_status = "✅" if db_manager.is_token_valid(user.id, "spotify") else "❌"
     
     # Check Apple Music status
-    apple_status = "✅" if apple_music_client.is_configured() else "❌"
+    if APPLEMUSICPY_AVAILABLE:
+        apple_status = "✅" if apple_music_client.is_configured() else "⚠️"
+    else:
+        apple_status = "⚠️"
     
     # Prepare status message
     if user_language == "ru":
@@ -317,6 +335,8 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Apple Music: {apple_status}\n\n"
             "Используйте /start для настройки сервисов."
         )
+        if not APPLEMUSICPY_AVAILABLE:
+            status_text += "\n\n⚠️ Apple Music временно недоступен"
     elif user_language == "es":
         status_text = (
             "🔐 <b>Estado de autorización:</b>\n\n"
@@ -324,6 +344,8 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Apple Music: {apple_status}\n\n"
             "Usa /start para configurar servicios."
         )
+        if not APPLEMUSICPY_AVAILABLE:
+            status_text += "\n\n⚠️ Apple Music no está disponible temporalmente"
     else:  # English
         status_text = (
             "🔐 <b>Authorization Status:</b>\n\n"
@@ -331,6 +353,8 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Apple Music: {apple_status}\n\n"
             "Use /start to configure services."
         )
+        if not APPLEMUSICPY_AVAILABLE:
+            status_text += "\n\n⚠️ Apple Music is temporarily unavailable"
     
     await update.message.reply_text(status_text, parse_mode="HTML")
 

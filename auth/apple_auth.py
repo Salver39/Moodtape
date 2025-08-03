@@ -5,11 +5,17 @@ import asyncio
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-import applemusicpy
 from utils.logger import get_logger
 from config.settings import settings
 
 logger = get_logger(__name__)
+
+try:
+    import applemusicpy
+    APPLEMUSICPY_AVAILABLE = True
+except ImportError:
+    logger.warning("⚠️ applemusicpy not installed, Apple Music integration will be disabled")
+    APPLEMUSICPY_AVAILABLE = False
 
 class AppleMusicClient:
     """Apple Music API client for Moodtape bot."""
@@ -20,8 +26,9 @@ class AppleMusicClient:
         self.logger = get_logger(__name__)
         self.initialized = False
         
-        # Try to initialize client
-        self._initialize_client()
+        # Try to initialize client only if applemusicpy is available
+        if APPLEMUSICPY_AVAILABLE:
+            self._initialize_client()
     
     def _initialize_client(self) -> None:
         """Initialize Apple Music client with developer token."""
@@ -40,15 +47,15 @@ class AppleMusicClient:
                     self.initialized = True
                     self.logger.info("✅ Apple Music client initialized successfully")
                 else:
-                    self.logger.error(f"❌ Apple Music key file not found: {key_file}")
+                    self.logger.warning(f"⚠️ Apple Music key file not found: {key_file}")
             else:
                 self.logger.warning("⚠️ Apple Music credentials not configured")
         except Exception as e:
-            self.logger.error(f"❌ Failed to initialize Apple Music client: {e}")
+            self.logger.warning(f"⚠️ Failed to initialize Apple Music client: {e}")
     
     def is_configured(self) -> bool:
         """Check if Apple Music client is properly configured."""
-        return self.initialized and self.client is not None
+        return APPLEMUSICPY_AVAILABLE and self.initialized and self.client is not None
     
     def search_tracks(self, query: str, limit: int = None) -> List[Dict[str, Any]]:
         """
