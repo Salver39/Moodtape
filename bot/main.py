@@ -16,6 +16,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 from config.settings import settings, validate_settings
 from utils.logger import get_logger
+from auth.spotify_auth import spotify_callback_handler
 
 # Попытка получить распределённый lock в Redis
 redis_url = os.environ.get("REDIS_URL")
@@ -62,6 +63,7 @@ async def start_health_server():
     """Start a minimal HTTP server for health checks."""
     app = web.Application()
     app.router.add_get("/", healthcheck)
+    app.router.add_get("/auth/spotify/callback", spotify_callback_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", "8000"))
