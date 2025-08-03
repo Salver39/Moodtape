@@ -50,9 +50,10 @@ async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_T
             logger.error(f"Failed to send error message to user: {e}")
     
     # Send detailed error report to admin chat
-    if settings.ADMIN_USER_IDS:
+    admin_ids = getattr(settings, "ADMIN_USER_IDS", [])
+    if admin_ids:
         try:
-            for admin_id in settings.ADMIN_USER_IDS:
+            for admin_id in admin_ids:
                 error_report = (
                     f"❌ <b>Error Report</b>\n\n"
                     f"<b>Type:</b> {html.escape(error_type)}\n"

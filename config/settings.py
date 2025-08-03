@@ -1,7 +1,7 @@
 """Configuration settings for Moodtape bot using Pydantic."""
 
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from pydantic import Field, validator
 from pydantic_settings import BaseSettings
 
@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     WEBHOOK_URL: Optional[str] = Field(None, description="Webhook URL for production")
     HEALTH_PORT: int = Field(8000, description="Health check server port")
     
+    # Admin settings
+    ADMIN_USER_IDS: List[int] = Field(default=[], description="List of admin user IDs for error reporting")
+    
     # Music services configuration
     MUSIC_SERVICES: Dict = Field(
         default_factory=lambda: {
@@ -96,6 +99,16 @@ class Settings(BaseSettings):
                 if key in environ:
                     return environ[key]
         return v
+    
+    @validator("ADMIN_USER_IDS", pre=True)
+    def validate_admin_user_ids(cls, v):
+        """Parse comma-separated admin user IDs from environment variable."""
+        if isinstance(v, str):
+            try:
+                return [int(x.strip()) for x in v.split(",") if x.strip()]
+            except ValueError as e:
+                raise ValueError("ADMIN_USER_IDS must be comma-separated integers") from e
+        return v or []
     
     @validator("MUSIC_SERVICES", always=True)
     def update_music_services(cls, v, values):
