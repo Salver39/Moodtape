@@ -66,7 +66,7 @@ async def start_health_server():
     app.router.add_get("/auth/spotify/callback", spotify_callback_handler)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", "8000"))
+    port = int(os.environ.get("PORT", "10000"))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info(f"🏥 Health check server started on port {port}")
