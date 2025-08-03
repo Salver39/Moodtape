@@ -453,5 +453,34 @@ class DatabaseManager:
             self.logger.error(f"Failed to get rate limit violations: {e}")
             return 0
 
+    def cleanup_old_rate_limit_violations(self, days_to_keep: int = 30) -> int:
+        """
+        Clean up old rate limit violations.
+        
+        Args:
+            days_to_keep: Number of days to keep violations for (default: 30)
+        
+        Returns:
+            Number of deleted records
+        """
+        try:
+            now = int(datetime.now().timestamp())
+            cutoff_time = now - (days_to_keep * 86400)  # 86400 seconds in a day
+            
+            with sqlite3.connect(RATE_LIMIT_DB) as conn:
+                cursor = conn.execute("""
+                    DELETE FROM rate_limit_violations
+                    WHERE last_violation_at < ?
+                """, (cutoff_time,))
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                self.logger.info(f"Cleaned up {deleted_count} old rate limit violations")
+                return deleted_count
+                
+        except Exception as e:
+            self.logger.error(f"Failed to clean up rate limit violations: {e}")
+            return 0
+
 # Global database manager instance
 db_manager = DatabaseManager() 
