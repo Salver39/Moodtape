@@ -9,7 +9,7 @@ from utils.logger import get_logger
 from utils.database import db_manager
 from auth.spotify_auth import spotify_auth
 from auth.apple_auth import apple_music_client
-from config.settings import MUSIC_SERVICES
+from config.settings import settings
 
 logger = get_logger(__name__)
 
@@ -101,11 +101,7 @@ async def handle_spotify_auth_request(update: Update, context: ContextTypes.DEFA
 
 
 async def check_spotify_auth_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Check if user has authorized Spotify and guide them accordingly.
-    
-    This function is called when user selects Spotify as their service.
-    """
+    """Check Spotify authorization status and handle accordingly."""
     query = update.callback_query
     user = query.from_user
     
@@ -114,138 +110,86 @@ async def check_spotify_auth_status(update: Update, context: ContextTypes.DEFAUL
     
     user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
-    # Проверяем токен более детально
-    token_data = db_manager.get_user_token(user.id, "spotify")
+    # Save selected service
+    user_sessions.set_session_data(user.id, "music_service", "spotify")
     
-    if token_data and token_data.get("access_token"):
-        # У пользователя есть токен, проверяем его валидность
-        if db_manager.is_token_valid(user.id, "spotify"):
-            # Токен действителен - пользователь уже авторизован
-            logger.info(f"User {user.id} already has valid Spotify token")
-            
-            # Сохраняем выбор сервиса и показываем успех
-            user_sessions.set_session_data(user.id, "music_service", "spotify")
-            
-            if user_language == "ru":
-                success_text = (
-                    "✅ <b>Spotify подключен!</b>\n\n"
-                    "🎵 Ваш аккаунт Spotify уже авторизован и готов к использованию.\n\n"
-                    "💭 <b>Опишите ваше настроение</b> - я создам персональный плейлист!"
-                )
-            else:
-                success_text = get_text(
-                    "service_selected", 
-                    user_language, 
-                    service="Spotify"
-                )
-            
-            await query.edit_message_text(success_text, parse_mode="HTML")
-        else:
-            # Токен истек или недействителен, но у нас есть refresh_token
-            if token_data.get("refresh_token"):
-                logger.info(f"User {user.id} has expired token but refresh_token available, attempting refresh")
-                
-                # Пытаемся обновить токен
-                from auth.spotify_auth import spotify_auth
-                new_token = spotify_auth.refresh_token(user.id)
-                
-                if new_token:
-                    # Успешно обновили токен
-                    logger.info(f"Successfully refreshed token for user {user.id}")
-                    user_sessions.set_session_data(user.id, "music_service", "spotify")
-                    
-                    if user_language == "ru":
-                        success_text = (
-                            "✅ <b>Spotify переподключен!</b>\n\n"
-                            "🔄 Ваш токен доступа был автоматически обновлен.\n\n"
-                            "💭 <b>Опишите ваше настроение</b> - я создам плейлист!"
-                        )
-                    else:
-                        success_text = get_text("service_selected", user_language, service="Spotify")
-                    
-                    await query.edit_message_text(success_text, parse_mode="HTML")
-                else:
-                    # Не удалось обновить токен - нужна повторная авторизация
-                    logger.warning(f"Failed to refresh token for user {user.id}, requiring re-authorization")
-                    await handle_spotify_auth_request(update, context)
-            else:
-                # Нет refresh_token - нужна полная авторизация
-                logger.info(f"User {user.id} has invalid token without refresh capability")
-                await handle_spotify_auth_request(update, context)
-    else:
-        # У пользователя нет токена - нужна авторизация
-        logger.info(f"User {user.id} needs Spotify authorization")
-        await handle_spotify_auth_request(update, context)
+    # Check if Spotify is enabled
+    if not settings.MUSIC_SERVICES["spotify"]["enabled"]:
+        await query.edit_message_text(
+            get_text("spotify_not_available", user_language),
+            parse_mode="HTML"
+        )
+        return
+    
+    # Check if user is already authorized
+    if db_manager.is_token_valid(user.id, "spotify"):
+        await query.edit_message_text(
+            get_text("spotify_already_authorized", user_language),
+            parse_mode="HTML"
+        )
+        return
+    
+    try:
+        # Generate auth URL
+        auth_url = spotify_auth.get_auth_url(user.id)
+        
+        # Create keyboard with auth link
+        keyboard = [[
+            InlineKeyboardButton(
+                get_text("spotify_auth_button", user_language),
+                url=auth_url
+            )
+        ]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send auth instructions
+        await query.edit_message_text(
+            get_text("spotify_auth_instructions", user_language),
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating Spotify auth URL for user {user.id}: {e}")
+        await query.edit_message_text(
+            get_text("error", user_language),
+            parse_mode="HTML"
+        )
 
 
 async def check_apple_music_availability(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Check if Apple Music is available and set it as user's service.
-    
-    Apple Music doesn't require user authorization - uses developer tokens.
-    """
+    """Check Apple Music availability and handle accordingly."""
     query = update.callback_query
     user = query.from_user
     
     if not user:
         return
     
-    await query.answer()
-    
     user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
-    # Check if Apple Music is configured
-    if not apple_music_client.is_configured():
-        logger.error("Apple Music not configured")
-        
-        if user_language == "ru":
-            error_text = "❌ Apple Music временно недоступен. Попробуйте Spotify."
-        elif user_language == "es":
-            error_text = "❌ Apple Music no está disponible temporalmente. Prueba Spotify."
-        else:
-            error_text = "❌ Apple Music is temporarily unavailable. Please try Spotify."
-        
-        await query.edit_message_text(error_text)
-        return
-    
-    # Apple Music is available - set as user's service
+    # Save selected service
     user_sessions.set_session_data(user.id, "music_service", "apple_music")
     
-    logger.info(f"User {user.id} selected Apple Music")
+    # Check if Apple Music is enabled and configured
+    if not settings.MUSIC_SERVICES["apple_music"]["enabled"]:
+        await query.edit_message_text(
+            get_text("apple_music_not_available", user_language),
+            parse_mode="HTML"
+        )
+        return
     
-    # Prepare success message with Apple Music specifics
-    if user_language == "ru":
-        success_text = (
-            "🍎 Apple Music выбран!\n\n"
-            "Теперь опишите ваше настроение, и я создам плейлист на основе mood-анализа.\n\n"
-            "📝 Например:\n"
-            "• \"спокойный вечер дома\"\n"
-            "• \"энергичная тренировка\"\n"
-            "• \"меланхолия и дождь\"\n\n"
-            "ℹ️ Apple Music использует только общий поиск музыки (без персональных данных)."
+    if not apple_music_client.is_configured():
+        await query.edit_message_text(
+            get_text("apple_music_not_configured", user_language),
+            parse_mode="HTML"
         )
-    elif user_language == "es":
-        success_text = (
-            "🍎 ¡Apple Music seleccionado!\n\n"
-            "Ahora describe tu estado de ánimo y crearé una lista basada en análisis de mood.\n\n"
-            "📝 Por ejemplo:\n"
-            "• \"tarde tranquila en casa\"\n"
-            "• \"entrenamiento energético\"\n"
-            "• \"melancolía y lluvia\"\n\n"
-            "ℹ️ Apple Music usa solo búsqueda general de música (sin datos personales)."
-        )
-    else:  # English
-        success_text = (
-            "🍎 Apple Music selected!\n\n"
-            "Now describe your mood and I'll create a playlist based on mood analysis.\n\n"
-            "📝 For example:\n"
-            "• \"quiet evening at home\"\n"
-            "• \"energetic workout\"\n"
-            "• \"melancholy and rain\"\n\n"
-            "ℹ️ Apple Music uses general music search only (no personal data)."
-        )
+        return
     
-    await query.edit_message_text(success_text, parse_mode="HTML")
+    # Apple Music is ready to use
+    await query.edit_message_text(
+        get_text("apple_music_ready", user_language),
+        parse_mode="HTML"
+    )
 
 
 async def handle_auth_callback(code: str, state: str) -> bool:
@@ -351,7 +295,7 @@ async def _send_auth_success_message(user_id: int) -> None:
 
 # Command to manually check authorization status
 async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /auth command to check authorization status."""
+    """Handle /auth command to check service authorization status."""
     user = update.effective_user
     
     if not user:
@@ -359,60 +303,36 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     user_language = user_sessions.get_session_data(user.id, "language", "ru")
     
-    status_lines = []
+    # Check Spotify status
+    spotify_status = "✅" if db_manager.is_token_valid(user.id, "spotify") else "❌"
     
-    # Check each service
-    for service_key, service_config in MUSIC_SERVICES.items():
-        if not service_config["enabled"]:
-            continue
-        
-        # Different authorization logic for different services
-        if service_key == "spotify":
-            is_authorized = db_manager.is_token_valid(user.id, service_key)
-            status_icon = "✅" if is_authorized else "❌"
-            status_text = "Authorized" if is_authorized else "Not authorized"
-            
-            if user_language == "ru":
-                status_text = "Авторизован" if is_authorized else "Не авторизован"
-            elif user_language == "es":
-                status_text = "Autorizado" if is_authorized else "No autorizado"
-        
-        elif service_key == "apple_music":
-            is_configured = apple_music_client.is_configured()
-            status_icon = "✅" if is_configured else "❌"
-            status_text = "Available" if is_configured else "Not configured"
-            
-            if user_language == "ru":
-                status_text = "Доступен" if is_configured else "Не настроен"
-            elif user_language == "es":
-                status_text = "Disponible" if is_configured else "No configurado"
-        
-        else:
-            # For other services, use token validation
-            is_authorized = db_manager.is_token_valid(user.id, service_key)
-            status_icon = "✅" if is_authorized else "❌"
-            status_text = "Authorized" if is_authorized else "Not authorized"
-            
-            if user_language == "ru":
-                status_text = "Авторизован" if is_authorized else "Не авторизован"
-            elif user_language == "es":
-                status_text = "Autorizado" if is_authorized else "No autorizado"
-        
-        status_lines.append(f"{status_icon} {service_config['name']}: {status_text}")
+    # Check Apple Music status
+    apple_status = "✅" if apple_music_client.is_configured() else "❌"
     
+    # Prepare status message
     if user_language == "ru":
-        header = "🔐 Статус авторизации:\n\n"
-        footer = "\n\nИспользуйте /start для авторизации"
+        status_text = (
+            "🔐 <b>Статус авторизации:</b>\n\n"
+            f"Spotify: {spotify_status}\n"
+            f"Apple Music: {apple_status}\n\n"
+            "Используйте /start для настройки сервисов."
+        )
     elif user_language == "es":
-        header = "🔐 Estado de autorización:\n\n"
-        footer = "\n\nUsa /start para autorizar"
-    else:
-        header = "🔐 Authorization Status:\n\n"
-        footer = "\n\nUse /start to authorize"
+        status_text = (
+            "🔐 <b>Estado de autorización:</b>\n\n"
+            f"Spotify: {spotify_status}\n"
+            f"Apple Music: {apple_status}\n\n"
+            "Usa /start para configurar servicios."
+        )
+    else:  # English
+        status_text = (
+            "🔐 <b>Authorization Status:</b>\n\n"
+            f"Spotify: {spotify_status}\n"
+            f"Apple Music: {apple_status}\n\n"
+            "Use /start to configure services."
+        )
     
-    status_message = header + "\n".join(status_lines) + footer
-    
-    await update.message.reply_text(status_message) 
+    await update.message.reply_text(status_text, parse_mode="HTML")
 
 
 async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
