@@ -137,6 +137,17 @@ class SpotifyAuth:
             self.logger.error(f"❌ Failed to refresh token: {e}")
             return None
 
+    async def handle_callback(self, code: str, state: str) -> None:
+        """
+        Обменивает code на токены и сохраняет их в БД, используя существующую логику OAuth.
+        state содержит user_id (если вы сохраняли его при генерации URL).
+        """
+        # Поменяй строку ниже на реальный вызов обмена кода на токены в этом классе
+        token_info = self.get_token(code)
+        # Сохрани token_info в БД для user_id, полученного из state
+        user_id = int(state)
+        await db_manager.save_spotify_tokens(user_id, token_info)
+
 # Global clients for singleton pattern
 _user_spotify: Optional[spotipy.Spotify] = None
 _public_spotify: Optional[spotipy.Spotify] = None
