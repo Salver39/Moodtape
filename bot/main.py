@@ -10,11 +10,23 @@ from pathlib import Path
 import threading
 from urllib.parse import urlparse, parse_qs
 from aiohttp import web
+import redis
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config.settings import settings, validate_settings
 from utils.logger import get_logger
+
+# Попытка получить распределённый lock в Redis
+redis_url = os.environ.get("REDIS_URL")
+if not redis_url:
+    sys.exit("ERROR: REDIS_URL не задан")
+
+client = redis.Redis.from_url(redis_url)
+# Устанавливаем ключ с NX и TTL 60 секунд
+acquired = client.set("moodtape_polling_lock", "1", nx=True, ex=60)
+if not acquired:
+    sys.exit(0)  # другой экземпляр уже держит lock
 
 # Import handlers
 from bot.handlers.start import start_command, service_selection_callback, help_command
