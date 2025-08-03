@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes
 
 from utils.i18n import get_user_language, get_text, user_sessions
 from utils.logger import get_logger
-from config.settings import MUSIC_SERVICES
+from config.settings import settings
 from bot.handlers.auth import check_spotify_auth_status, check_apple_music_availability
 from bot.middleware.rate_limiter import rate_limited  # Включено обратно с улучшенной обработкой ошибок
 
@@ -98,7 +98,7 @@ async def service_selection_callback(update: Update, context: ContextTypes.DEFAU
         return
     
     # Validate service
-    if service_key not in MUSIC_SERVICES or not MUSIC_SERVICES[service_key]["enabled"]:
+    if service_key not in settings.MUSIC_SERVICES or not settings.MUSIC_SERVICES[service_key]["enabled"]:
         logger.error(f"Invalid or disabled service selected: {service_key}")
         return
     
@@ -114,7 +114,7 @@ async def service_selection_callback(update: Update, context: ContextTypes.DEFAU
         user_language = user_sessions.get_session_data(user.id, "language", "ru")
         user_sessions.set_session_data(user.id, "music_service", service_key)
         
-        service_name = MUSIC_SERVICES[service_key]["name"]
+        service_name = settings.MUSIC_SERVICES[service_key]["name"]
         confirmation_text = get_text(
             "service_selected", 
             user_language, 
