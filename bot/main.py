@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -110,212 +109,6 @@ def signal_handler(signum, frame):
     logger.info("👋 Goodbye!")
     sys.exit(0)
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    """HTTP handler for health checks and OAuth callbacks."""
-    
-    def do_GET(self):
-        """Handle GET requests for health check and OAuth callbacks."""
-        parsed_url = urlparse(self.path)
-        path = parsed_url.path
-        query_params = parse_qs(parsed_url.query)
-        
-        if path == "/health" or path == "/":
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(b'{"status": "healthy", "service": "moodtape-bot"}')
-            
-        elif path == "/auth/spotify/callback":
-            self._handle_spotify_callback(query_params)
-            
-        else:
-            self.send_response(404)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b'<h1>404 Not Found</h1>')
-    
-    def _handle_spotify_callback(self, query_params):
-        """Handle Spotify OAuth callback."""
-        try:
-            # Extract code and state from callback
-            code = query_params.get('code', [None])[0]
-            state = query_params.get('state', [None])[0]
-            error = query_params.get('error', [None])[0]
-            
-            if error:
-                logger.error(f"Spotify OAuth error: {error}")
-                self._send_callback_page(
-                    "❌ Authorization Failed",
-                    f"Error: {error}",
-                    False
-                )
-                return
-            
-            if not code or not state:
-                logger.error("Missing code or state in Spotify callback")
-                self._send_callback_page(
-                    "❌ Authorization Failed",
-                    "Missing authorization code or state parameter.",
-                    False
-                )
-                return
-            
-            # Process the callback asynchronously
-            success = asyncio.run(self._process_spotify_callback(code, state))
-            
-            if success:
-                self._send_callback_page(
-                    "✅ Authorization Successful!",
-                    "You can now return to Telegram and start creating playlists!",
-                    True
-                )
-            else:
-                self._send_callback_page(
-                    "❌ Authorization Failed",
-                    "Failed to process authorization. Please try again.",
-                    False
-                )
-                
-        except Exception as e:
-            logger.error(f"Error handling Spotify callback: {e}")
-            self._send_callback_page(
-                "❌ Authorization Failed", 
-                "An unexpected error occurred.",
-                False
-            )
-    
-    async def _process_spotify_callback(self, code: str, state: str) -> bool:
-        """Process Spotify callback asynchronously."""
-        try:
-            return await handle_auth_callback(code, state)
-        except Exception as e:
-            logger.error(f"Error processing Spotify callback: {e}")
-            return False
-    
-    def _send_callback_page(self, title: str, message: str, success: bool):
-        """Send HTML response page for OAuth callback."""
-        status_color = "#4CAF50" if success else "#f44336"
-        icon = "✅" if success else "❌"
-        
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Moodtape - Spotify Authorization</title>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                    margin: 0;
-                    padding: 20px;
-                    min-height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }}
-                .container {{
-                    background: white;
-                    border-radius: 20px;
-                    padding: 40px;
-                    text-align: center;
-                    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                    max-width: 400px;
-                    width: 100%;
-                }}
-                .icon {{
-                    font-size: 60px;
-                    margin-bottom: 20px;
-                }}
-                h1 {{
-                    color: {status_color};
-                    margin-bottom: 20px;
-                    font-size: 24px;
-                }}
-                p {{
-                    color: #666;
-                    line-height: 1.6;
-                    margin-bottom: 30px;
-                    font-size: 16px;
-                }}
-                .telegram-button {{
-                    background: #0088cc;
-                    color: white;
-                    padding: 12px 24px;
-                    border: none;
-                    border-radius: 25px;
-                    text-decoration: none;
-                    display: inline-block;
-                    font-weight: bold;
-                    font-size: 16px;
-                    transition: background 0.3s;
-                }}
-                .telegram-button:hover {{
-                    background: #006ba1;
-                }}
-                .footer {{
-                    margin-top: 30px;
-                    color: #999;
-                    font-size: 14px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="icon">{icon}</div>
-                <h1>{title}</h1>
-                <p>{message}</p>
-                <a href="https://t.me/Mood_TAape_Music_bot" class="telegram-button">
-                    🤖 Return to Telegram Bot
-                </a>
-                <div class="footer">
-                    Moodtape - Music that matches your mood
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(html_content.encode('utf-8'))
-    
-    def log_message(self, format, *args):
-        """Suppress HTTP server logs."""
-        pass
-
-def check_port_available(port: int) -> bool:
-    """Check if a port is available."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(('0.0.0.0', port))
-            return True
-        except OSError:
-            return False
-
-def start_health_server():
-    """Start a simple health check server for Render.com"""
-    try:
-        # Get port from settings
-        port = settings.HEALTH_PORT
-        
-        # Check if port is available
-        if not check_port_available(port):
-            logger.error(f"❌ Port {port} is already in use")
-            logger.error("💡 Set HEALTH_PORT environment variable to use a different port")
-            return
-        
-        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        logger.info(f"🏥 Health check server started on port {port}")
-        server.serve_forever()
-    except Exception as e:
-        logger.error(f"❌ Failed to start health server: {e}")
-        logger.error("💡 Check if the port is available or set HEALTH_PORT to use a different port")
-
-
 def main() -> None:
     """Start the bot."""
     # Check for existing instances via PID file
@@ -338,10 +131,6 @@ def main() -> None:
         logger.error("Please set the required environment variables and restart the bot")
         remove_pid_file()
         return
-    
-    # Start health check server in background thread for Render compatibility
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
     
     # Create application with better error handling
     global _application
@@ -419,22 +208,10 @@ def main() -> None:
             webhook_config = get_webhook_config()
             
             if webhook_config:
-                # Проверяем порты для health check и webhook
-                health_port = int(os.getenv("HEALTH_PORT", "10000"))
-                webhook_port = webhook_config["port"]
-                
-                if health_port != webhook_port:
-                    # Запускаем health check на отдельном порту
-                    health_thread = threading.Thread(target=start_health_server, daemon=True)
-                    health_thread.start()
-                    logger.info(f"✅ Health check server started on separate port {health_port}")
-                else:
-                    logger.warning(f"⚠️ Health check disabled: port {health_port} conflicts with webhook port")
-                
                 # Запускаем webhook сервер
                 _application.run_webhook(
                     listen=webhook_config["listen"],
-                    port=webhook_port,
+                    port=webhook_config["port"],
                     url_path=webhook_config["path"],
                     webhook_url=webhook_config["url"] + webhook_config["path"],
                     secret_token=webhook_config.get("secret_token"),
@@ -451,10 +228,6 @@ def main() -> None:
             return
     else:
         logger.info("🔄 Starting in POLLING mode for development")
-        # В режиме polling запускаем health check сервер
-        health_thread = threading.Thread(target=start_health_server, daemon=True)
-        health_thread.start()
-        logger.info("✅ Health check server started in polling mode")
         
         # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
         max_attempts = 3
@@ -494,7 +267,7 @@ def main() -> None:
                     logger.error(f"💡 Error: {e}")
                     
                     if attempt < max_attempts - 1:
-                        logger.error(f"�� Will retry in {base_delay * (2 ** attempt)} seconds...")
+                        logger.error(f"Will retry in {base_delay * (2 ** attempt)} seconds...")
                         continue
                     else:
                         logger.error("💥 FINAL ATTEMPT FAILED - Multiple instances still running!")
@@ -509,13 +282,6 @@ def main() -> None:
                         continue
                     else:
                         raise
-            else:
-                logger.error(f"❌ Unexpected error on attempt {attempt + 1}: {e}")
-                if attempt < max_attempts - 1:
-                    continue
-                else:
-                    raise
-
 
 if __name__ == "__main__":
     try:
