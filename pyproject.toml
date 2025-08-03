@@ -34,6 +34,8 @@ dependencies = [
     "cryptography==42.0.8",
     "APScheduler==3.10.4",
     "httpx>=0.27.0,<0.29.0",  # Зафиксировал совместимую версию httpx
+    "pydantic>=2.0.0",        # Добавляем явную зависимость от pydantic 2.x
+    "pydantic-settings>=2.0.0"  # Добавляем pydantic-settings для BaseSettings
 ]
 
 [project.optional-dependencies]

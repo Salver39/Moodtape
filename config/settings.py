@@ -2,7 +2,8 @@
 
 from pathlib import Path
 from typing import Dict, Optional
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, validator
+from pydantic_settings import BaseSettings
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
