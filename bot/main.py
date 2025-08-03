@@ -9,6 +9,7 @@ import fcntl
 from pathlib import Path
 import threading
 from urllib.parse import urlparse, parse_qs
+from aiohttp import web
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
@@ -40,6 +41,21 @@ logger = get_logger(__name__)
 _application = None
 _shutdown_event = asyncio.Event()
 _pid_file = settings.DATA_DIR / "bot.pid"
+
+async def healthcheck(request):
+    """Handle health check requests."""
+    return web.Response(text="OK")
+
+async def start_health_server():
+    """Start a minimal HTTP server for health checks."""
+    app = web.Application()
+    app.router.add_get("/", healthcheck)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", "8000"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"🏥 Health check server started on port {port}")
 
 def create_pid_file():
     """Create PID file to prevent multiple instances."""
@@ -229,6 +245,10 @@ def main() -> None:
             return
     else:
         logger.info("🔄 Starting in POLLING mode for development")
+        
+        # Start health check server
+        loop = asyncio.get_event_loop()
+        loop.create_task(start_health_server())
         
         # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
         max_attempts = 3
