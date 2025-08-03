@@ -6,6 +6,7 @@ import asyncio
 import random
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlencode
+from aiohttp import web
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
@@ -462,4 +463,14 @@ class SpotifyClient:
             self.logger.error(f"Error during Spotify permissions diagnosis: {e}")
 
 # Global instances
-spotify_auth = SpotifyAuth() 
+spotify_auth = SpotifyAuth()
+
+# Callback handler
+async def spotify_callback_handler(request: web.Request) -> web.Response:
+    code = request.query.get("code")
+    state = request.query.get("state")
+    if not code:
+        return web.Response(text="Missing code parameter", status=400)
+    # Обмен кода на токены, state содержит user_id, если используется
+    await spotify_auth.handle_callback(code, state)
+    return web.Response(text="Spotify authorization successful. You can return to Telegram.", status=200) 
