@@ -16,7 +16,7 @@ from config.settings import settings
 logger = get_logger(__name__)
 
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the bot."""
     
     # Extract error details
