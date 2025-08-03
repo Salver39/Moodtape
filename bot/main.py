@@ -10,6 +10,8 @@ from pathlib import Path
 import threading
 from urllib.parse import urlparse, parse_qs
 from aiohttp import web
+import logging
+logging.getLogger("aiohttp.server").setLevel(logging.DEBUG)
 import redis
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
@@ -57,7 +59,11 @@ _pid_file = settings.DATA_DIR / "bot.pid"
 
 async def healthcheck(request):
     """Handle health check requests."""
-    return web.Response(text="OK")
+    try:
+        return web.Response(text="OK")
+    except Exception:
+        logger.exception("Healthcheck crashed")
+        return web.Response(status=500, text="Healthcheck error")
 
 async def start_health_server():
     """Start a minimal HTTP server for health checks."""
