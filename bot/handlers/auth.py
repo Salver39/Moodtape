@@ -413,3 +413,47 @@ async def auth_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     status_message = header + "\n".join(status_lines) + footer
     
     await update.message.reply_text(status_message) 
+
+
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /logout command to revoke Spotify authorization."""
+    user = update.effective_user
+    
+    if not user:
+        return
+    
+    user_language = user_sessions.get_session_data(user.id, "language", "ru")
+    
+    try:
+        # Delete Spotify token from database
+        db_manager.delete_user_token(user.id, "spotify")
+        
+        # Clear service selection from session
+        user_sessions.set_session_data(user.id, "music_service", None)
+        
+        # Send confirmation message
+        if user_language == "ru":
+            message = (
+                "✅ Вы успешно вышли из Spotify!\n\n"
+                "Для создания новых плейлистов вам нужно будет заново авторизоваться.\n"
+                "Используйте /start для авторизации."
+            )
+        elif user_language == "es":
+            message = (
+                "✅ ¡Has cerrado sesión de Spotify exitosamente!\n\n"
+                "Necesitarás volver a autorizar para crear nuevas listas.\n"
+                "Usa /start para autorizar."
+            )
+        else:
+            message = (
+                "✅ Successfully logged out from Spotify!\n\n"
+                "You'll need to re-authorize to create new playlists.\n"
+                "Use /start to authorize."
+            )
+        
+        await update.message.reply_text(message)
+        logger.info(f"User {user.id} logged out from Spotify")
+        
+    except Exception as e:
+        logger.error(f"Error logging out user {user.id} from Spotify: {e}")
+        await update.message.reply_text(get_text("error", user_language)) 

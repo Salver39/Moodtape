@@ -18,7 +18,7 @@ from utils.logger import get_logger
 # Import handlers
 from bot.handlers.start import start_command, service_selection_callback, help_command
 from bot.handlers.mood import mood_message_handler
-from bot.handlers.auth import auth_status_command, handle_auth_callback
+from bot.handlers.auth import auth_status_command, handle_auth_callback, logout_command
 from bot.handlers.feedback import handle_feedback_callback
 from bot.handlers.preferences import preferences_command, stats_command
 from bot.handlers.admin import (
@@ -345,6 +345,7 @@ def main() -> None:
     _application.add_handler(CommandHandler("auth", auth_status_command))
     _application.add_handler(CommandHandler("preferences", preferences_command))
     _application.add_handler(CommandHandler("stats", stats_command))
+    _application.add_handler(CommandHandler("logout", logout_command))
     
     # Admin commands
     _application.add_handler(CommandHandler("admin_stats", admin_rate_limit_stats))
