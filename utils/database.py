@@ -2,47 +2,34 @@
 
 import sqlite3
 import json
-import time
-import os
-from typing import Optional, Dict, Any, List
+from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, Any, List, Union
 
-from config.settings import DATA_DIR
 from utils.logger import get_logger
+from config.settings import settings
 
 logger = get_logger(__name__)
 
-# Убеждаемся, что папка data существует и доступна для записи
-try:
-    DATA_DIR.mkdir(exist_ok=True)
-    # Проверяем права на запись
-    test_file = DATA_DIR / ".write_test"
-    test_file.touch()
-    test_file.unlink()
-    logger.info(f"✅ Data directory is accessible: {DATA_DIR}")
-except Exception as e:
-    logger.error(f"❌ Data directory is not accessible: {DATA_DIR}, error: {e}")
-    # Создаем fallback папку в текущей директории
-    DATA_DIR = Path.cwd() / "data"
-    DATA_DIR.mkdir(exist_ok=True)
-    logger.warning(f"⚠️ Using fallback data directory: {DATA_DIR}")
+# Ensure data directory exists
+data_dir = Path(settings.DATA_DIR)
+data_dir.mkdir(parents=True, exist_ok=True)
+logger.info(f"✅ Data directory is accessible: {data_dir}")
 
 # Database paths
-TOKENS_DB_PATH = DATA_DIR / "tokens.sqlite"
-FEEDBACK_DB_PATH = DATA_DIR / "feedback.sqlite" 
-QUERY_LOG_DB_PATH = DATA_DIR / "query_log.sqlite"
-RATE_LIMIT_DB_PATH = DATA_DIR / "rate_limits.sqlite"
-
+TOKENS_DB = data_dir / "tokens.db"
+FEEDBACK_DB = data_dir / "feedback.db"
+QUERY_LOG_DB = data_dir / "query_log.db"
+RATE_LIMIT_DB = data_dir / "rate_limit.db"
 
 class DatabaseManager:
-    """Manages SQLite databases for Moodtape bot."""
+    """Manages database operations for Moodtape bot."""
     
     def __init__(self):
-        """Initialize database connections and create tables."""
-        self.init_databases()
-    
-    def init_databases(self):
-        """Initialize all required databases and tables."""
+        """Initialize database connections and tables."""
+        self.logger = get_logger(__name__)
+        
+        # Initialize databases
         self._init_tokens_db()
         self._init_feedback_db()
         self._init_query_log_db()
@@ -50,419 +37,421 @@ class DatabaseManager:
     
     def _init_tokens_db(self):
         """Initialize tokens database."""
-        with sqlite3.connect(TOKENS_DB_PATH) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS user_tokens (
-                    user_id INTEGER PRIMARY KEY,
-                    service TEXT NOT NULL,
-                    access_token TEXT NOT NULL,
-                    refresh_token TEXT,
-                    expires_at INTEGER,
-                    scope TEXT,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                )
-            """)
-            conn.commit()
-        logger.info("Tokens database initialized")
+        try:
+            with sqlite3.connect(TOKENS_DB) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tokens (
+                        user_id INTEGER PRIMARY KEY,
+                        service TEXT NOT NULL,
+                        access_token TEXT,
+                        refresh_token TEXT,
+                        expires_at INTEGER,
+                        created_at INTEGER,
+                        updated_at INTEGER
+                    )
+                """)
+                conn.commit()
+            self.logger.info("Tokens database initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize tokens database: {e}")
     
     def _init_feedback_db(self):
         """Initialize feedback database."""
-        with sqlite3.connect(FEEDBACK_DB_PATH) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS user_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    query_id TEXT,
-                    rating INTEGER,  -- 1 for thumbs up, -1 for thumbs down
-                    feedback_text TEXT,
-                    mood_params TEXT,  -- JSON of mood parameters
-                    created_at INTEGER NOT NULL
-                )
-            """)
-            conn.commit()
-        logger.info("Feedback database initialized")
+        try:
+            with sqlite3.connect(FEEDBACK_DB) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        query_id TEXT NOT NULL,
+                        rating INTEGER,
+                        comment TEXT,
+                        created_at INTEGER
+                    )
+                """)
+                conn.commit()
+            self.logger.info("Feedback database initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize feedback database: {e}")
     
     def _init_query_log_db(self):
         """Initialize query log database."""
-        with sqlite3.connect(QUERY_LOG_DB_PATH) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS query_log (
-                    id TEXT PRIMARY KEY,
-                    user_id INTEGER NOT NULL,
-                    mood_description TEXT NOT NULL,
-                    mood_params TEXT,  -- JSON of parsed mood parameters
-                    service TEXT NOT NULL,
-                    playlist_id TEXT,
-                    playlist_url TEXT,
-                    success BOOLEAN NOT NULL,
-                    error_message TEXT,
-                    created_at INTEGER NOT NULL
-                )
-            """)
-            conn.commit()
-        logger.info("Query log database initialized")
-
+        try:
+            with sqlite3.connect(QUERY_LOG_DB) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS query_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        query_id TEXT NOT NULL,
+                        mood_description TEXT,
+                        mood_params TEXT,
+                        playlist_info TEXT,
+                        created_at INTEGER
+                    )
+                """)
+                conn.commit()
+            self.logger.info("Query log database initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize query log database: {e}")
+    
     def _init_rate_limit_db(self):
         """Initialize rate limit violations database."""
-        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS rate_limit_violations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    operation TEXT NOT NULL,
-                    violation_type TEXT NOT NULL,
-                    cooldown_seconds INTEGER NOT NULL,
-                    created_at INTEGER NOT NULL
-                )
-            """)
-            conn.commit()
-        logger.info("Rate limit violations database initialized")
+        try:
+            with sqlite3.connect(RATE_LIMIT_DB) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS rate_limit_violations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        operation TEXT NOT NULL,
+                        violation_count INTEGER DEFAULT 1,
+                        first_violation_at INTEGER,
+                        last_violation_at INTEGER
+                    )
+                """)
+                conn.commit()
+            self.logger.info("Rate limit violations database initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize rate limit database: {e}")
     
-    # Token management methods
     def save_user_token(
-        self, 
-        user_id: int, 
+        self,
+        user_id: int,
         service: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        expires_at: Optional[int] = None,
-        scope: Optional[str] = None
-    ) -> None:
-        """Save or update user token."""
-        current_time = int(time.time())
+        expires_at: Optional[int] = None
+    ) -> bool:
+        """
+        Save or update user's service token.
         
-        with sqlite3.connect(TOKENS_DB_PATH) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO user_tokens 
-                (user_id, service, access_token, refresh_token, expires_at, scope, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, service, access_token, refresh_token, expires_at, scope, current_time, current_time))
-            conn.commit()
+        Args:
+            user_id: Telegram user ID
+            service: Service name (e.g., 'spotify')
+            access_token: OAuth access token
+            refresh_token: OAuth refresh token (optional)
+            expires_at: Token expiration timestamp (optional)
         
-        logger.info(f"Saved token for user {user_id}, service {service}")
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            now = int(datetime.now().timestamp())
+            
+            with sqlite3.connect(TOKENS_DB) as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO tokens (
+                        user_id, service, access_token, refresh_token,
+                        expires_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    user_id, service, access_token, refresh_token,
+                    expires_at, now, now
+                ))
+                conn.commit()
+            
+            self.logger.info(f"Saved {service} token for user {user_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save user token: {e}")
+            return False
     
     def get_user_token(self, user_id: int, service: str) -> Optional[Dict[str, Any]]:
-        """Get user token for specific service."""
-        with sqlite3.connect(TOKENS_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
-                SELECT * FROM user_tokens WHERE user_id = ? AND service = ?
-            """, (user_id, service))
-            row = cursor.fetchone()
-            
-            if row:
-                return dict(row)
+        """
+        Get user's service token.
+        
+        Args:
+            user_id: Telegram user ID
+            service: Service name
+        
+        Returns:
+            Token info dictionary or None if not found
+        """
+        try:
+            with sqlite3.connect(TOKENS_DB) as conn:
+                cursor = conn.execute("""
+                    SELECT access_token, refresh_token, expires_at, updated_at
+                    FROM tokens
+                    WHERE user_id = ? AND service = ?
+                """, (user_id, service))
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'access_token': row[0],
+                        'refresh_token': row[1],
+                        'expires_at': row[2],
+                        'updated_at': row[3]
+                    }
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get user token: {e}")
             return None
     
-    def delete_user_token(self, user_id: int, service: str) -> None:
-        """Delete user token for specific service."""
-        with sqlite3.connect(TOKENS_DB_PATH) as conn:
-            conn.execute("""
-                DELETE FROM user_tokens WHERE user_id = ? AND service = ?
-            """, (user_id, service))
-            conn.commit()
+    def delete_user_token(self, user_id: int, service: str) -> bool:
+        """
+        Delete user's service token.
         
-        logger.info(f"Deleted token for user {user_id}, service {service}")
+        Args:
+            user_id: Telegram user ID
+            service: Service name
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            with sqlite3.connect(TOKENS_DB) as conn:
+                conn.execute("""
+                    DELETE FROM tokens
+                    WHERE user_id = ? AND service = ?
+                """, (user_id, service))
+                conn.commit()
+            
+            self.logger.info(f"Deleted {service} token for user {user_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to delete user token: {e}")
+            return False
     
     def is_token_valid(self, user_id: int, service: str) -> bool:
-        """Check if user token is valid and not expired."""
-        token_data = self.get_user_token(user_id, service)
-        if not token_data:
-            logger.info(f"No token found for user {user_id}, service {service}")
+        """
+        Check if user's service token is valid and not expired.
+        
+        Args:
+            user_id: Telegram user ID
+            service: Service name
+        
+        Returns:
+            True if token is valid, False otherwise
+        """
+        token_info = self.get_user_token(user_id, service)
+        if not token_info or not token_info.get('access_token'):
             return False
         
-        # Проверяем обязательные поля
-        if not token_data.get('access_token'):
-            logger.info(f"No access_token found for user {user_id}, service {service}")
-            return False
-        
-        # Проверяем истечение токена с буфером 5 минут
-        if token_data.get('expires_at'):
-            current_time = int(time.time())
-            expires_at = token_data['expires_at']
-            buffer_time = 300  # 5 минут
-            
-            if current_time >= (expires_at - buffer_time):
-                logger.info(f"Token for user {user_id}, service {service} will expire soon "
-                           f"(expires: {expires_at}, now: {current_time}, buffer: {buffer_time})")
+        # Check expiration if available
+        expires_at = token_info.get('expires_at')
+        if expires_at:
+            now = int(datetime.now().timestamp())
+            if now >= expires_at:
                 return False
         
-        logger.debug(f"Token is valid for user {user_id}, service {service}")
         return True
     
-    # Feedback methods
     def save_feedback(
         self,
         user_id: int,
-        rating: int,
-        query_id: Optional[str] = None,
-        feedback_text: Optional[str] = None,
-        mood_params: Optional[Dict] = None
-    ) -> None:
-        """Save user feedback."""
-        mood_params_json = json.dumps(mood_params) if mood_params else None
-        current_time = int(time.time())
+        query_id: str,
+        rating: Optional[int] = None,
+        comment: Optional[str] = None
+    ) -> bool:
+        """
+        Save user feedback for a playlist.
         
-        with sqlite3.connect(FEEDBACK_DB_PATH) as conn:
-            conn.execute("""
-                INSERT INTO user_feedback 
-                (user_id, query_id, rating, feedback_text, mood_params, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, query_id, rating, feedback_text, mood_params_json, current_time))
-            conn.commit()
+        Args:
+            user_id: Telegram user ID
+            query_id: Unique query identifier
+            rating: Numeric rating (optional)
+            comment: Text comment (optional)
         
-        logger.info(f"Saved feedback for user {user_id}: rating={rating}")
-    
-    def get_user_feedback_history(self, user_id: int, limit: int = 10) -> List[Dict]:
-        """Get user's recent feedback history."""
-        with sqlite3.connect(FEEDBACK_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
-                SELECT * FROM user_feedback 
-                WHERE user_id = ? 
-                ORDER BY created_at DESC 
-                LIMIT ?
-            """, (user_id, limit))
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            now = int(datetime.now().timestamp())
             
-            rows = cursor.fetchall()
-            feedback_list = []
-            for row in rows:
-                feedback = dict(row)
-                if feedback.get('mood_params'):
-                    try:
-                        feedback['mood_params'] = json.loads(feedback['mood_params'])
-                    except json.JSONDecodeError:
-                        feedback['mood_params'] = None
-                feedback_list.append(feedback)
+            with sqlite3.connect(FEEDBACK_DB) as conn:
+                conn.execute("""
+                    INSERT INTO feedback (
+                        user_id, query_id, rating, comment, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                """, (user_id, query_id, rating, comment, now))
+                conn.commit()
             
-            return feedback_list
+            self.logger.info(f"Saved feedback for query {query_id} from user {user_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save feedback: {e}")
+            return False
     
-    # Query log methods
     def log_query(
         self,
-        query_id: str,
         user_id: int,
+        query_id: str,
         mood_description: str,
-        service: str,
-        mood_params: Optional[Dict] = None,
-        playlist_id: Optional[str] = None,
-        playlist_url: Optional[str] = None,
-        success: bool = True,
-        error_message: Optional[str] = None
-    ) -> None:
-        """Log a user query."""
-        mood_params_json = json.dumps(mood_params) if mood_params else None
-        current_time = int(time.time())
+        mood_params: Dict[str, Any],
+        playlist_info: Dict[str, Any]
+    ) -> bool:
+        """
+        Log a mood query and its results.
         
-        with sqlite3.connect(QUERY_LOG_DB_PATH) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO query_log 
-                (id, user_id, mood_description, mood_params, service, playlist_id, 
-                 playlist_url, success, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (query_id, user_id, mood_description, mood_params_json, service,
-                  playlist_id, playlist_url, success, error_message, current_time))
-            conn.commit()
+        Args:
+            user_id: Telegram user ID
+            query_id: Unique query identifier
+            mood_description: Original mood description
+            mood_params: Parsed mood parameters
+            playlist_info: Generated playlist info
         
-        logger.info(f"Logged query {query_id} for user {user_id}")
-    
-    def get_user_query_history(self, user_id: int, limit: int = 10) -> List[Dict]:
-        """Get user's recent query history."""
-        with sqlite3.connect(QUERY_LOG_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("""
-                SELECT * FROM query_log 
-                WHERE user_id = ? 
-                ORDER BY created_at DESC 
-                LIMIT ?
-            """, (user_id, limit))
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            now = int(datetime.now().timestamp())
             
-            rows = cursor.fetchall()
-            query_list = []
-            for row in rows:
-                query = dict(row)
-                if query.get('mood_params'):
-                    try:
-                        query['mood_params'] = json.loads(query['mood_params'])
-                    except json.JSONDecodeError:
-                        query['mood_params'] = None
-                query_list.append(query)
+            with sqlite3.connect(QUERY_LOG_DB) as conn:
+                conn.execute("""
+                    INSERT INTO query_log (
+                        user_id, query_id, mood_description,
+                        mood_params, playlist_info, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    user_id, query_id, mood_description,
+                    json.dumps(mood_params), json.dumps(playlist_info), now
+                ))
+                conn.commit()
             
-            return query_list
+            self.logger.info(f"Logged query {query_id} for user {user_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log query: {e}")
+            return False
     
-    def log_rate_limit_violation(
+    def get_user_queries(
         self,
         user_id: int,
-        operation: str,
-        violation_type: str,
-        cooldown_seconds: int
-    ) -> None:
+        limit: int = 10,
+        with_feedback: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user's recent queries with optional feedback.
+        
+        Args:
+            user_id: Telegram user ID
+            limit: Maximum number of queries to return
+            with_feedback: Include feedback data if True
+        
+        Returns:
+            List of query dictionaries
+        """
+        try:
+            with sqlite3.connect(QUERY_LOG_DB) as conn:
+                conn.row_factory = sqlite3.Row
+                
+                if with_feedback:
+                    cursor = conn.execute("""
+                        SELECT q.*, f.rating, f.comment
+                        FROM query_log q
+                        LEFT JOIN feedback f ON q.query_id = f.query_id
+                        WHERE q.user_id = ?
+                        ORDER BY q.created_at DESC
+                        LIMIT ?
+                    """, (user_id, limit))
+                else:
+                    cursor = conn.execute("""
+                        SELECT *
+                        FROM query_log
+                        WHERE user_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    """, (user_id, limit))
+                
+                queries = []
+                for row in cursor:
+                    query = dict(row)
+                    # Parse JSON fields
+                    query['mood_params'] = json.loads(query['mood_params'])
+                    query['playlist_info'] = json.loads(query['playlist_info'])
+                    queries.append(query)
+                
+                return queries
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get user queries: {e}")
+            return []
+    
+    def log_rate_limit_violation(self, user_id: int, operation: str) -> None:
         """
         Log a rate limit violation.
         
         Args:
-            user_id: ID of the user who violated rate limit
-            operation: Type of operation (e.g., 'playlist_creation')
-            violation_type: Type of violation (e.g., 'per_minute', 'per_hour')
-            cooldown_seconds: Cooldown period applied
+            user_id: Telegram user ID
+            operation: Operation type that was rate limited
         """
         try:
-            current_time = int(time.time())
-            with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-                conn.execute("""
-                    INSERT INTO rate_limit_violations 
-                    (user_id, operation, violation_type, cooldown_seconds, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (user_id, operation, violation_type, cooldown_seconds, current_time))
+            now = int(datetime.now().timestamp())
+            
+            with sqlite3.connect(RATE_LIMIT_DB) as conn:
+                # Check if user already has violations
+                cursor = conn.execute("""
+                    SELECT violation_count, first_violation_at
+                    FROM rate_limit_violations
+                    WHERE user_id = ? AND operation = ?
+                """, (user_id, operation))
+                
+                row = cursor.fetchone()
+                if row:
+                    # Update existing record
+                    conn.execute("""
+                        UPDATE rate_limit_violations
+                        SET violation_count = violation_count + 1,
+                            last_violation_at = ?
+                        WHERE user_id = ? AND operation = ?
+                    """, (now, user_id, operation))
+                else:
+                    # Create new record
+                    conn.execute("""
+                        INSERT INTO rate_limit_violations (
+                            user_id, operation, violation_count,
+                            first_violation_at, last_violation_at
+                        ) VALUES (?, ?, 1, ?, ?)
+                    """, (user_id, operation, now, now))
+                
                 conn.commit()
-            logger.warning(
-                f"Rate limit violation logged: user={user_id}, operation={operation}, "
-                f"violation={violation_type}, cooldown={cooldown_seconds}s"
-            )
+            
+            self.logger.warning(f"Rate limit violation logged for user {user_id} ({operation})")
+            
         except Exception as e:
-            # НЕ бросаем исключение - просто логируем ошибку
-            logger.error(f"Failed to log rate limit violation to database: {e}")
-            logger.warning(
-                f"Rate limit violation (not logged): user={user_id}, operation={operation}, "
-                f"violation={violation_type}, cooldown={cooldown_seconds}s"
-            )
+            self.logger.error(f"Failed to log rate limit violation: {e}")
     
     def get_rate_limit_violations(
         self,
-        user_id: Optional[int] = None,
-        operation: Optional[str] = None,
-        hours_back: int = 24,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
+        user_id: int,
+        operation: str,
+        window_seconds: int = 3600
+    ) -> int:
         """
-        Get rate limit violations with optional filtering.
+        Get number of rate limit violations within time window.
         
         Args:
-            user_id: Filter by specific user (optional)
-            operation: Filter by operation type (optional)
-            hours_back: How many hours back to look
-            limit: Maximum number of results
-            
+            user_id: Telegram user ID
+            operation: Operation type to check
+            window_seconds: Time window in seconds
+        
         Returns:
-            List of violation records
+            Number of violations
         """
-        cutoff_time = int(time.time()) - (hours_back * 3600)
-        
-        query = """
-            SELECT id, user_id, operation, violation_type, cooldown_seconds, created_at
-            FROM rate_limit_violations 
-            WHERE created_at >= ?
-        """
-        params = [cutoff_time]
-        
-        if user_id:
-            query += " AND user_id = ?"
-            params.append(user_id)
+        try:
+            now = int(datetime.now().timestamp())
+            window_start = now - window_seconds
             
-        if operation:
-            query += " AND operation = ?"
-            params.append(operation)
-            
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
-        
-        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(query, params)
-            
-            violations = []
-            for row in cursor.fetchall():
-                violations.append({
-                    'id': row['id'],
-                    'user_id': row['user_id'],
-                    'operation': row['operation'],
-                    'violation_type': row['violation_type'],
-                    'cooldown_seconds': row['cooldown_seconds'],
-                    'created_at': row['created_at'],
-                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(row['created_at']))
-                })
-            
-            return violations
-    
-    def get_rate_limit_stats(self, hours_back: int = 24) -> Dict[str, Any]:
-        """
-        Get rate limit violation statistics.
-        
-        Args:
-            hours_back: How many hours back to analyze
-            
-        Returns:
-            Dictionary with statistics
-        """
-        cutoff_time = int(time.time()) - (hours_back * 3600)
-        
-        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-            # Total violations
-            total_violations = conn.execute(
-                "SELECT COUNT(*) FROM rate_limit_violations WHERE created_at >= ?",
-                (cutoff_time,)
-            ).fetchone()[0]
-            
-            # Violations by operation
-            operation_stats = conn.execute("""
-                SELECT operation, COUNT(*) as count
-                FROM rate_limit_violations 
-                WHERE created_at >= ?
-                GROUP BY operation
-                ORDER BY count DESC
-            """, (cutoff_time,)).fetchall()
-            
-            # Violations by user (top violators)
-            user_stats = conn.execute("""
-                SELECT user_id, COUNT(*) as count
-                FROM rate_limit_violations 
-                WHERE created_at >= ?
-                GROUP BY user_id
-                ORDER BY count DESC
-                LIMIT 10
-            """, (cutoff_time,)).fetchall()
-            
-            # Violations by type
-            type_stats = conn.execute("""
-                SELECT violation_type, COUNT(*) as count
-                FROM rate_limit_violations 
-                WHERE created_at >= ?
-                GROUP BY violation_type
-                ORDER BY count DESC
-            """, (cutoff_time,)).fetchall()
-            
-            return {
-                'total_violations': total_violations,
-                'hours_analyzed': hours_back,
-                'operations': [{'operation': row[0], 'count': row[1]} for row in operation_stats],
-                'top_violators': [{'user_id': row[0], 'count': row[1]} for row in user_stats],
-                'violation_types': [{'type': row[0], 'count': row[1]} for row in type_stats]
-            }
-    
-    def cleanup_old_rate_limit_violations(self, days_to_keep: int = 30) -> int:
-        """
-        Clean up old rate limit violations.
-        
-        Args:
-            days_to_keep: How many days of data to keep
-            
-        Returns:
-            Number of records deleted
-        """
-        cutoff_time = int(time.time()) - (days_to_keep * 24 * 3600)
-        
-        with sqlite3.connect(RATE_LIMIT_DB_PATH) as conn:
-            cursor = conn.execute(
-                "DELETE FROM rate_limit_violations WHERE created_at < ?",
-                (cutoff_time,)
-            )
-            deleted_count = cursor.rowcount
-            conn.commit()
-            
-        logger.info(f"Cleaned up {deleted_count} old rate limit violations (older than {days_to_keep} days)")
-        return deleted_count
-
+            with sqlite3.connect(RATE_LIMIT_DB) as conn:
+                cursor = conn.execute("""
+                    SELECT violation_count
+                    FROM rate_limit_violations
+                    WHERE user_id = ?
+                    AND operation = ?
+                    AND last_violation_at >= ?
+                """, (user_id, operation, window_start))
+                
+                row = cursor.fetchone()
+                return row[0] if row else 0
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get rate limit violations: {e}")
+            return 0
 
 # Global database manager instance
 db_manager = DatabaseManager() 
