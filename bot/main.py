@@ -289,11 +289,14 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def start_health_server():
     """Start a simple health check server for Render.com"""
     try:
-        server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
-        logger.info(f"🏥 Health check server started on port 10000")
+        # Используем отдельный порт для health check
+        health_port = int(os.getenv("HEALTH_PORT", "10000"))
+        server = HTTPServer(('0.0.0.0', health_port), HealthCheckHandler)
+        logger.info(f"🏥 Health check server started on port {health_port}")
         server.serve_forever()
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
+        logger.error("💡 Set HEALTH_PORT environment variable to use a different port")
 
 
 def main() -> None:
@@ -399,9 +402,22 @@ def main() -> None:
             webhook_config = get_webhook_config()
             
             if webhook_config:
+                # Проверяем порты для health check и webhook
+                health_port = int(os.getenv("HEALTH_PORT", "10000"))
+                webhook_port = webhook_config["port"]
+                
+                if health_port != webhook_port:
+                    # Запускаем health check на отдельном порту
+                    health_thread = threading.Thread(target=start_health_server, daemon=True)
+                    health_thread.start()
+                    logger.info(f"✅ Health check server started on separate port {health_port}")
+                else:
+                    logger.warning(f"⚠️ Health check disabled: port {health_port} conflicts with webhook port")
+                
+                # Запускаем webhook сервер
                 _application.run_webhook(
                     listen=webhook_config["listen"],
-                    port=webhook_config["port"], 
+                    port=webhook_port,
                     url_path=webhook_config["path"],
                     webhook_url=webhook_config["url"] + webhook_config["path"],
                     secret_token=webhook_config.get("secret_token"),
@@ -418,6 +434,11 @@ def main() -> None:
             return
     else:
         logger.info("🔄 Starting in POLLING mode for development")
+        # В режиме polling запускаем health check сервер
+        health_thread = threading.Thread(target=start_health_server, daemon=True)
+        health_thread.start()
+        logger.info("✅ Health check server started in polling mode")
+        
         # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
         max_attempts = 3
         base_delay = 10
