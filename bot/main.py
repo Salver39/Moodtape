@@ -5,10 +5,12 @@ import os
 import signal
 import sys
 import time
+import fcntl
 from pathlib import Path
 import threading
 from urllib.parse import urlparse, parse_qs
 
+import aioredis
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 from config.settings import settings, validate_settings
@@ -39,6 +41,10 @@ logger = get_logger(__name__)
 _application = None
 _shutdown_event = asyncio.Event()
 _pid_file = settings.DATA_DIR / "bot.pid"
+
+# Redis lock settings
+REDIS_LOCK_KEY = "moodtape_polling_lock"
+REDIS_LOCK_TTL = 60  # seconds
 
 def create_pid_file():
     """Create PID file to prevent multiple instances."""
@@ -108,6 +114,30 @@ def signal_handler(signum, frame):
     
     logger.info("👋 Goodbye!")
     sys.exit(0)
+
+async def acquire_polling_lock(redis_url: str) -> bool:
+    """
+    Try to acquire distributed lock for polling.
+    
+    Args:
+        redis_url: Redis connection URL
+    
+    Returns:
+        True if lock acquired, False otherwise
+    """
+    try:
+        redis = await aioredis.from_url(redis_url)
+        locked = await redis.set(
+            REDIS_LOCK_KEY,
+            os.getpid(),
+            nx=True,  # Only set if not exists
+            ex=REDIS_LOCK_TTL  # Expire after TTL seconds
+        )
+        await redis.close()
+        return bool(locked)
+    except Exception as e:
+        logger.error(f"Failed to acquire Redis lock: {e}")
+        return False
 
 def main() -> None:
     """Start the bot."""
@@ -245,6 +275,13 @@ def main() -> None:
                 # Progressively more conservative settings for each retry
                 poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
                 timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
+                
+                # Try to acquire polling lock
+                lockfile = open("/tmp/moodtape.polling.lock", "w")
+                try:
+                    fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    sys.exit(0)
                 
                 # FIXED: Use sync approach - run_polling handles event loop internally
                 _application.run_polling(
