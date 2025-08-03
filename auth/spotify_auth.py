@@ -27,6 +27,115 @@ SPOTIFY_SCOPES = [
     "playlist-modify-private"     # Create private playlists
 ]
 
+class SpotifyAuth:
+    """Handles Spotify OAuth authorization."""
+    
+    def __init__(self):
+        """Initialize Spotify auth manager."""
+        self.logger = get_logger(__name__)
+        self._auth_manager = None
+        self._initialize_auth()
+    
+    def _initialize_auth(self) -> None:
+        """Initialize OAuth manager."""
+        try:
+            self._auth_manager = SpotifyOAuth(
+                client_id=settings.SPOTIFY_CLIENT_ID,
+                client_secret=settings.SPOTIFY_CLIENT_SECRET,
+                redirect_uri=settings.SPOTIFY_REDIRECT_URI,
+                scope=SPOTIFY_SCOPES,
+                show_dialog=False  # Don't force re-auth
+            )
+            self.logger.info("✅ Spotify OAuth manager initialized")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize Spotify OAuth: {e}")
+    
+    def get_auth_url(self, user_id: int) -> Optional[str]:
+        """
+        Get authorization URL for user.
+        
+        Args:
+            user_id: Telegram user ID
+        
+        Returns:
+            Authorization URL or None if failed
+        """
+        try:
+            if not self._auth_manager:
+                self._initialize_auth()
+            
+            if not self._auth_manager:
+                self.logger.error("❌ OAuth manager not initialized")
+                return None
+            
+            auth_url = self._auth_manager.get_authorize_url()
+            self.logger.info(f"Generated auth URL for user {user_id}")
+            return auth_url
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to get auth URL: {e}")
+            return None
+    
+    def get_token(self, auth_code: str) -> Optional[Dict[str, Any]]:
+        """
+        Get access token from authorization code.
+        
+        Args:
+            auth_code: Authorization code from callback
+        
+        Returns:
+            Token info dictionary or None if failed
+        """
+        try:
+            if not self._auth_manager:
+                self._initialize_auth()
+            
+            if not self._auth_manager:
+                self.logger.error("❌ OAuth manager not initialized")
+                return None
+            
+            token_info = self._auth_manager.get_access_token(auth_code)
+            if not token_info:
+                self.logger.error("❌ Failed to get token info")
+                return None
+            
+            self.logger.info("✅ Successfully got access token")
+            return token_info
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to get token: {e}")
+            return None
+    
+    def refresh_token(self, refresh_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Refresh access token.
+        
+        Args:
+            refresh_token: Refresh token
+        
+        Returns:
+            New token info dictionary or None if failed
+        """
+        try:
+            if not self._auth_manager:
+                self._initialize_auth()
+            
+            if not self._auth_manager:
+                self.logger.error("❌ OAuth manager not initialized")
+                return None
+            
+            token_info = self._auth_manager.refresh_access_token(refresh_token)
+            if not token_info:
+                self.logger.error("❌ Failed to refresh token")
+                return None
+            
+            self.logger.info("✅ Successfully refreshed token")
+            return token_info
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to refresh token: {e}")
+            return None
+
 # Global clients for singleton pattern
 _user_spotify: Optional[spotipy.Spotify] = None
 _public_spotify: Optional[spotipy.Spotify] = None
@@ -350,4 +459,7 @@ class SpotifyClient:
                 self.logger.error(f"❌ OAuth API: saved_tracks failed: {e}")
             
         except Exception as e:
-            self.logger.error(f"Error during Spotify permissions diagnosis: {e}") 
+            self.logger.error(f"Error during Spotify permissions diagnosis: {e}")
+
+# Global instances
+spotify_auth = SpotifyAuth() 
