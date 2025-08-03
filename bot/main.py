@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import time
-import fcntl
 from pathlib import Path
 import threading
 from urllib.parse import urlparse, parse_qs
@@ -19,6 +18,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from config.settings import settings, validate_settings
 from utils.logger import get_logger
 from auth.spotify_auth import spotify_callback_handler
+
+logger = get_logger(__name__)
 
 # Попытка получить распределённый lock в Redis
 redis_url = os.environ.get("REDIS_URL")
@@ -50,12 +51,9 @@ from bot.handlers.admin import (
 from bot.middleware.error_handler import telegram_error_handler
 from bot.middleware.rate_limiter import rate_limiter
 
-logger = get_logger(__name__)
-
 # Global application instance
 _application = None
 _shutdown_event = asyncio.Event()
-_pid_file = settings.DATA_DIR / "bot.pid"
 
 async def healthcheck(request):
     """Handle health check requests."""
@@ -77,51 +75,6 @@ async def start_health_server():
     await site.start()
     logger.info(f"🏥 Health check server started on port {port}")
 
-def create_pid_file():
-    """Create PID file to prevent multiple instances."""
-    try:
-        if _pid_file.exists():
-            # Check if the process is still running
-            try:
-                with open(_pid_file, 'r') as f:
-                    old_pid = int(f.read().strip())
-                
-                # Check if process exists
-                try:
-                    os.kill(old_pid, 0)  # Signal 0 checks if process exists
-                    logger.warning(f"⚠️ Bot already running with PID {old_pid}")
-                    logger.warning("🔧 If this is incorrect, delete the PID file manually:")
-                    logger.warning(f"   rm {_pid_file}")
-                    return False
-                except OSError:
-                    # Process doesn't exist, remove stale PID file
-                    logger.info(f"🧹 Removing stale PID file (process {old_pid} not found)")
-                    _pid_file.unlink()
-            except (ValueError, IOError):
-                # Invalid PID file, remove it
-                logger.info("🧹 Removing invalid PID file")
-                _pid_file.unlink()
-        
-        # Create new PID file
-        with open(_pid_file, 'w') as f:
-            f.write(str(os.getpid()))
-        
-        logger.info(f"📝 Created PID file: {_pid_file} (PID: {os.getpid()})")
-        return True
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Could not create PID file: {e}")
-        return True  # Continue anyway
-
-def remove_pid_file():
-    """Remove PID file on shutdown."""
-    try:
-        if _pid_file.exists():
-            _pid_file.unlink()
-            logger.info(f"🗑️ Removed PID file: {_pid_file}")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not remove PID file: {e}")
-
 def get_application():
     """Get the global application instance."""
     return _application
@@ -140,21 +93,18 @@ def signal_handler(signum, frame):
         except Exception as e:
             logger.error(f"Error during graceful shutdown: {e}")
     
-    # Remove PID file
-    remove_pid_file()
+    # Release Redis lock
+    try:
+        client.delete("moodtape_polling_lock")
+        logger.info("✅ Released Redis lock")
+    except Exception as e:
+        logger.error(f"❌ Failed to release Redis lock: {e}")
     
     logger.info("👋 Goodbye!")
     sys.exit(0)
 
 def main() -> None:
     """Start the bot."""
-    # Check for existing instances via PID file
-    if not create_pid_file():
-        logger.error("❌ Another bot instance is already running!")
-        logger.error("💡 If you're sure no other instance is running, delete the PID file:")
-        logger.error(f"   rm {_pid_file}")
-        return
-    
     # Setup signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -166,7 +116,6 @@ def main() -> None:
     except ValueError as e:
         logger.error(f"❌ Configuration error: {e}")
         logger.error("Please set the required environment variables and restart the bot")
-        remove_pid_file()
         return
     
     # Create application with better error handling
@@ -176,7 +125,6 @@ def main() -> None:
         logger.info("✅ Telegram application created successfully")
     except Exception as e:
         logger.error(f"❌ Failed to create Telegram application: {e}")
-        remove_pid_file()
         return
     
     # Wait a bit for any old instances to fully terminate
@@ -257,11 +205,9 @@ def main() -> None:
                 logger.info("🎵 Bot started successfully in webhook mode!")
             else:
                 logger.error("❌ Failed to get webhook configuration")
-                remove_pid_file()
                 return
         except Exception as e:
             logger.error(f"❌ Failed to start webhook mode: {e}")
-            remove_pid_file()
             return
     else:
         logger.info("🔄 Starting in POLLING mode for development")
@@ -270,66 +216,24 @@ def main() -> None:
         loop = asyncio.get_event_loop()
         loop.create_task(start_health_server())
         
-        # MULTIPLE ATTEMPT STRATEGY WITH INCREASING DELAYS
-        max_attempts = 3
-        base_delay = 10
-        
-        for attempt in range(max_attempts):
-            try:
-                if attempt > 0:
-                    delay = base_delay * (2 ** (attempt - 1))  # 10s, 20s, 40s delays
-                    logger.info(f"⏳ Attempt {attempt + 1}/{max_attempts} - waiting {delay}s for old instances to die...")
-                    time.sleep(delay)
-                
-                logger.info(f"🔄 Starting bot attempt {attempt + 1}/{max_attempts} with polling")
-                
-                # Progressively more conservative settings for each retry
-                poll_interval = 3.0 + (attempt * 2.0)  # 3s, 5s, 7s
-                timeout = 15 + (attempt * 5)           # 15s, 20s, 25s
-                
-                # Try to acquire polling lock
-                lockfile = open("/tmp/moodtape.polling.lock", "w")
-                try:
-                    fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    sys.exit(0)
-                
-                # FIXED: Use sync approach - run_polling handles event loop internally
-                _application.run_polling(
-                    poll_interval=poll_interval,
-                    timeout=timeout,
-                    drop_pending_updates=True,  # This clears old updates automatically
-                    stop_signals=None,
-                    close_loop=False
-                )
-                
-                # If we get here, polling started successfully
-                logger.info("🎵 Bot started successfully!")
-                break
-                
-            except Exception as e:
-                error_str = str(e).lower()
-                
-                if "conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
-                    logger.error(f"🚨 ATTEMPT {attempt + 1}: Multiple bot instances detected!")
-                    logger.error(f"💡 Error: {e}")
-                    
-                    if attempt < max_attempts - 1:
-                        logger.error(f"Will retry in {base_delay * (2 ** attempt)} seconds...")
-                        continue
-                    else:
-                        logger.error("💥 FINAL ATTEMPT FAILED - Multiple instances still running!")
-                        logger.error("🔧 MANUAL ACTION REQUIRED:")
-                        logger.error("   1. Check Render.com dashboard for multiple deployments")
-                        logger.error("   2. Manually stop old deployments")
-                        logger.error("   3. Wait 30 seconds and redeploy")
-                        raise
-                else:
-                    logger.error(f"❌ Unexpected error on attempt {attempt + 1}: {e}")
-                    if attempt < max_attempts - 1:
-                        continue
-                    else:
-                        raise
+        # Start polling with conservative settings
+        try:
+            _application.run_polling(
+                poll_interval=3.0,
+                timeout=15,
+                drop_pending_updates=True,
+                stop_signals=None,
+                close_loop=False
+            )
+            logger.info("🎵 Bot started successfully!")
+        except Exception as e:
+            error_str = str(e).lower()
+            if "conflict" in error_str and "getUpdates" in error_str:
+                logger.error("🚨 Multiple bot instances detected!")
+                logger.error(f"💡 Error: {e}")
+            else:
+                logger.error(f"❌ Unexpected error: {e}")
+            raise
 
 if __name__ == "__main__":
     try:
@@ -357,10 +261,11 @@ if __name__ == "__main__":
             except:
                 pass
         
-        # Always remove PID file on exit
-        remove_pid_file()
+        # Release Redis lock on error
+        try:
+            client.delete("moodtape_polling_lock")
+            logger.info("✅ Released Redis lock")
+        except Exception as e:
+            logger.error(f"❌ Failed to release Redis lock: {e}")
         
-        sys.exit(1)
-    finally:
-        # Ensure PID file is removed even if we exit normally
-        remove_pid_file() 
+        sys.exit(1) 
