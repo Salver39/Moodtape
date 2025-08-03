@@ -69,7 +69,7 @@ class SpotifyAuth:
                 self.logger.error("❌ OAuth manager not initialized")
                 return None
             
-            auth_url = self._auth_manager.get_authorize_url()
+            auth_url = self._auth_manager.get_authorize_url(state=str(user_id))
             self.logger.info(f"Generated auth URL for user {user_id}")
             return auth_url
             
@@ -137,16 +137,36 @@ class SpotifyAuth:
             self.logger.error(f"❌ Failed to refresh token: {e}")
             return None
 
-    async def handle_callback(self, code: str, state: str) -> None:
+    async def handle_callback(self, code: str, state: Optional[str]) -> None:
         """
         Обменивает code на токены и сохраняет их в БД, используя существующую логику OAuth.
         state содержит user_id (если вы сохраняли его при генерации URL).
         """
-        # Поменяй строку ниже на реальный вызов обмена кода на токены в этом классе
+        if not state:
+            self.logger.error("❌ Missing state parameter in callback")
+            raise ValueError("Missing state parameter")
+            
+        try:
+            user_id = int(state)
+        except ValueError:
+            self.logger.error(f"❌ Invalid state parameter: {state}")
+            raise ValueError(f"Invalid state parameter: {state}")
+
+        # Обмен кода на токены
         token_info = self.get_token(code)
-        # Сохрани token_info в БД для user_id, полученного из state
-        user_id = int(state)
-        await db_manager.save_spotify_tokens(user_id, token_info)
+        if not token_info:
+            self.logger.error("❌ Failed to get token info")
+            raise ValueError("Failed to get token info")
+
+        # Сохраняем токены в БД
+        await db_manager.save_user_token(
+            user_id=user_id,
+            service="spotify",
+            access_token=token_info["access_token"],
+            refresh_token=token_info.get("refresh_token"),
+            expires_at=token_info.get("expires_at")
+        )
+        self.logger.info(f"✅ Successfully saved tokens for user {user_id}")
 
 # Global clients for singleton pattern
 _user_spotify: Optional[spotipy.Spotify] = None
@@ -482,6 +502,9 @@ async def spotify_callback_handler(request: web.Request) -> web.Response:
     state = request.query.get("state")
     if not code:
         return web.Response(text="Missing code parameter", status=400)
-    # Обмен кода на токены, state содержит user_id, если используется
-    await spotify_auth.handle_callback(code, state)
-    return web.Response(text="Spotify authorization successful. You can return to Telegram.", status=200) 
+    try:
+        await spotify_auth.handle_callback(code, state)
+        return web.Response(text="Spotify authorization successful. You can return to Telegram.", status=200)
+    except ValueError as e:
+        logger.error(f"Error in callback handler: {e}")
+        return web.Response(text=str(e), status=400) 
