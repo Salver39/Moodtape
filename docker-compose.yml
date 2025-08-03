@@ -11,13 +11,15 @@ services:
       - ENVIRONMENT=production
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
+      - HEALTH_PORT=${HEALTH_PORT:-8000}
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:${PORT:-8000}"
+      - "${HEALTH_PORT:-8000}:${HEALTH_PORT:-8000}"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:${HEALTH_PORT:-8000}/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3

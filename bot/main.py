@@ -286,14 +286,34 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         """Suppress HTTP server logs."""
         pass
 
+def check_port_available(port: int) -> bool:
+    """Check if a port is available."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('0.0.0.0', port))
+            return True
+        except OSError:
+            return False
+
 def start_health_server():
     """Start a simple health check server for Render.com"""
     try:
-        server = HTTPServer(('0.0.0.0', settings.HEALTH_PORT), HealthCheckHandler)
-        logger.info(f"🏥 Health check server started on port {settings.HEALTH_PORT}")
+        # Get port from settings
+        port = settings.HEALTH_PORT
+        
+        # Check if port is available
+        if not check_port_available(port):
+            logger.error(f"❌ Port {port} is already in use")
+            logger.error("💡 Set HEALTH_PORT environment variable to use a different port")
+            return
+        
+        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        logger.info(f"🏥 Health check server started on port {port}")
         server.serve_forever()
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
+        logger.error("💡 Check if the port is available or set HEALTH_PORT to use a different port")
 
 
 def main() -> None:

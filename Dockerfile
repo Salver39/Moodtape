@@ -25,9 +25,11 @@ RUN mkdir -p data
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
+ENV HEALTH_PORT=8000
 
-# Expose port for health checks (Render compatibility)
+# Expose ports for health checks and webhook (Render compatibility)
 EXPOSE $PORT
+EXPOSE $HEALTH_PORT
 
 # Run the bot
 CMD ["python", "-m", "bot.main"] 
