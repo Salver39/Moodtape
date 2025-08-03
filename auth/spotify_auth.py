@@ -11,12 +11,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth, SpotifyClientCredentials
 from spotipy.exceptions import SpotifyException
 
-from config.settings import (
-    SPOTIPY_CLIENT_ID, 
-    SPOTIPY_CLIENT_SECRET, 
-    SPOTIPY_REDIRECT_URI,
-    DEFAULT_PLAYLIST_LENGTH
-)
+from config.settings import settings
 from utils.database import db_manager
 from utils.logger import get_logger
 from moodtape_core.gpt_parser import MoodParameters
@@ -49,9 +44,9 @@ def get_user_spotify() -> Optional[spotipy.Spotify]:
     if _user_spotify is None:
         try:
             auth_manager = SpotifyOAuth(
-                client_id=SPOTIPY_CLIENT_ID,
-                client_secret=SPOTIPY_CLIENT_SECRET,
-                redirect_uri=SPOTIPY_REDIRECT_URI,
+                client_id=settings.SPOTIFY_CLIENT_ID,
+                client_secret=settings.SPOTIFY_CLIENT_SECRET,
+                redirect_uri=settings.SPOTIFY_REDIRECT_URI,
                 scope=SPOTIFY_SCOPES,
                 show_dialog=False  # Don't force re-auth
             )
@@ -75,8 +70,8 @@ def get_public_spotify() -> Optional[spotipy.Spotify]:
     if _public_spotify is None:
         try:
             auth_manager = SpotifyClientCredentials(
-                client_id=SPOTIPY_CLIENT_ID,
-                client_secret=SPOTIPY_CLIENT_SECRET
+                client_id=settings.SPOTIFY_CLIENT_ID,
+                client_secret=settings.SPOTIFY_CLIENT_SECRET
             )
             _public_spotify = spotipy.Spotify(auth_manager=auth_manager)
         except Exception as e:
@@ -98,11 +93,14 @@ class SpotifyClient:
         self.user_id = user_id
         self.logger = get_logger(__name__)
     
-    def search_tracks_by_mood(self, mood_params: MoodParameters, limit: int = DEFAULT_PLAYLIST_LENGTH) -> List[Dict[str, Any]]:
+    def search_tracks_by_mood(self, mood_params: MoodParameters, limit: int = None) -> List[Dict[str, Any]]:
         """
         Search for tracks that match mood parameters.
         Uses public client for search operations.
         """
+        if limit is None:
+            limit = settings.DEFAULT_PLAYLIST_LENGTH
+            
         spotify = get_public_spotify()
         if not spotify:
             return []
@@ -280,13 +278,16 @@ class SpotifyClient:
         seed_tracks: List[str] = None,
         seed_artists: List[str] = None,
         seed_genres: List[str] = None,
-        limit: int = DEFAULT_PLAYLIST_LENGTH,
+        limit: int = None,
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Get track recommendations.
         Uses public client for recommendations.
         """
+        if limit is None:
+            limit = settings.DEFAULT_PLAYLIST_LENGTH
+            
         spotify = get_public_spotify()
         if not spotify:
             return []
