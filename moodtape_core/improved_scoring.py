@@ -448,21 +448,14 @@ class SpotifyTrackEnricher:
         Initialize track enricher.
         
         Args:
-            spotify_client: SpotifyClient instance for API calls
+            spotify_client: SpotifyClient instance for API calls, uses public client if None
         """
-        self.spotify_client = spotify_client
+        from auth.spotify_auth import get_public_spotify
+        self.spotify_client = spotify_client or get_public_spotify()
         self.logger = get_logger(__name__)
     
     def enrich_tracks_with_audio_features(self, tracks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Enrich track data with audio features from Spotify API.
-        
-        Args:
-            tracks: List of track dictionaries
-            
-        Returns:
-            List of tracks enriched with audio features
-        """
+        """Enrich track data with audio features from Spotify API."""
         if not tracks or not self.spotify_client:
             self.logger.warning("No tracks provided or Spotify client not available for enrichment")
             return tracks
@@ -484,7 +477,8 @@ class SpotifyTrackEnricher:
             for i in range(0, len(track_ids), batch_size):
                 batch_ids = track_ids[i:i + batch_size]
                 try:
-                    features_batch = self.spotify_client.get_audio_features(batch_ids)
+                    # Use audio_features directly from client
+                    features_batch = self.spotify_client.audio_features(batch_ids)
                     
                     if features_batch:
                         for track_id, features in zip(batch_ids, features_batch):

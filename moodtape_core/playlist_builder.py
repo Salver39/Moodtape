@@ -47,13 +47,14 @@ class PlaylistBuilder:
         # Initialize music service client
         if service == "spotify":
             self.spotify_client = SpotifyClient(user_id)
+            # Initialize enricher with public client
+            self.enricher = SpotifyTrackEnricher()
             # Initialize personalized engine for audio_features fallback
-            self.personalized_engine = PersonalizedPlaylistEngine(self.spotify_client)
+            self.personalized_engine = None
         elif service == "apple_music":
             # Apple Music doesn't require user-specific initialization
-            # We'll use the global apple_music_client
+            self.enricher = None
             self.personalized_engine = None
-            pass
     
     def is_service_available(self) -> bool:
         """Check if the music service is available and authenticated."""
