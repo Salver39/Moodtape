@@ -80,6 +80,11 @@ class Settings(BaseSettings):
             for key in ["TELEGRAM_BOT_TOKEN", "Telegram_Token", "TELEGRAM_TOKEN", "BOT_TOKEN"]:
                 if key in environ:
                     return environ[key]
+            available_vars = ", ".join(environ.keys())
+            raise ValueError(
+                f"Bot token not found. Please set one of: TELEGRAM_BOT_TOKEN, BOT_TOKEN. "
+                f"Available environment variables: {available_vars}"
+            )
         return v
     
     @validator("OPENAI_API_KEY", pre=True)
