@@ -5,11 +5,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from config.settings import LOG_LEVEL, LOG_FORMAT, DATA_DIR
+from config.settings import settings
 
 
 def setup_logging(
-    level: str = LOG_LEVEL,
+    level: str = settings.LOG_LEVEL,
     log_to_file: bool = True,
     log_file: Optional[Path] = None
 ) -> logging.Logger:
@@ -28,7 +28,7 @@ def setup_logging(
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     
     # Create formatter
-    formatter = logging.Formatter(LOG_FORMAT)
+    formatter = logging.Formatter(settings.LOG_FORMAT)
     
     # Get root logger
     logger = logging.getLogger()
@@ -46,7 +46,7 @@ def setup_logging(
     # File handler (optional)
     if log_to_file:
         if log_file is None:
-            log_file = DATA_DIR / "moodtape.log"
+            log_file = settings.DATA_DIR / "moodtape.log"
         
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(numeric_level)
