@@ -1,11 +1,8 @@
-"""Configuration settings for Moodtape bot."""
+"""Configuration settings for Moodtape bot using Pydantic."""
 
-import os
-from dotenv import load_dotenv
 from pathlib import Path
-
-# Load environment variables from .env file (for local development)
-load_dotenv()
+from typing import Dict, Optional
+from pydantic import BaseSettings, Field, validator
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent
@@ -14,47 +11,122 @@ DATA_DIR = BASE_DIR / "data"
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)
 
-# Telegram Bot (try multiple possible names)
-TELEGRAM_BOT_TOKEN = (
-    os.getenv("TELEGRAM_BOT_TOKEN") or 
-    os.getenv("Telegram_Token") or 
-    os.getenv("TELEGRAM_TOKEN") or
-    os.getenv("BOT_TOKEN")
-)
-
-# OpenAI GPT-4o (try multiple possible names)
-OPENAI_API_KEY = (
-    os.getenv("OPENAI_API_KEY") or 
-    os.getenv("OPENAI_API_Key") or 
-    os.getenv("OPENAI_TOKEN") or
-    os.getenv("GPT_API_KEY")
-)
-
-
-
-# Проверка критических переменных в runtime, а не при импорте
-def validate_required_env_vars():
-    """Проверяет наличие обязательных переменных окружения"""
-    missing_vars = []
+class Settings(BaseSettings):
+    """Application settings managed by Pydantic."""
     
-    if not TELEGRAM_BOT_TOKEN:
-        missing_vars.append("TELEGRAM_BOT_TOKEN")
+    # Base paths (not from env)
+    BASE_DIR: Path = BASE_DIR
+    DATA_DIR: Path = DATA_DIR
     
-    if not OPENAI_API_KEY:
-        missing_vars.append("OPENAI_API_KEY")
+    # Critical settings
+    BOT_TOKEN: str = Field(..., description="Telegram Bot Token")
+    OPENAI_API_KEY: str = Field(..., description="OpenAI API Key")
     
-    if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+    # OpenAI settings
+    OPENAI_MODEL: str = Field("gpt-4o", description="OpenAI model to use")
+    OPENAI_TEMPERATURE: float = Field(0.5, description="OpenAI temperature parameter")
     
-    # Проверяем музыкальные сервисы (не критично для запуска)
+    # Spotify settings
+    SPOTIFY_CLIENT_ID: Optional[str] = Field(None, description="Spotify Client ID")
+    SPOTIFY_CLIENT_SECRET: Optional[str] = Field(None, description="Spotify Client Secret")
+    SPOTIFY_REDIRECT_URI: str = Field("http://localhost:8888/callback", description="Spotify OAuth redirect URI")
+    
+    # Apple Music settings
+    APPLE_TEAM_ID: Optional[str] = Field(None, description="Apple Team ID")
+    APPLE_KEY_ID: Optional[str] = Field(None, description="Apple Key ID")
+    APPLE_PRIVATE_KEY_PATH: Optional[str] = Field(None, description="Path to Apple private key file")
+    
+    # Database settings
+    DATABASE_URL: str = Field(default_factory=lambda: f"sqlite:///{DATA_DIR}/moodtape.db")
+    TOKENS_DB_PATH: Path = Field(default_factory=lambda: DATA_DIR / "tokens.sqlite")
+    FEEDBACK_DB_PATH: Path = Field(default_factory=lambda: DATA_DIR / "feedback.sqlite")
+    QUERY_LOG_DB_PATH: Path = Field(default_factory=lambda: DATA_DIR / "query_log.sqlite")
+    
+    # Logging settings
+    LOG_LEVEL: str = Field("INFO", description="Logging level")
+    LOG_FORMAT: str = Field("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    
+    # Playlist settings
+    DEFAULT_PLAYLIST_LENGTH: int = Field(20, description="Default number of tracks in playlist")
+    MAX_PLAYLIST_LENGTH: int = Field(50, description="Maximum number of tracks in playlist")
+    
+    # Rate limiting
+    MAX_REQUESTS_PER_USER_PER_HOUR: int = Field(10, description="Maximum requests per user per hour")
+    
+    # Feature flags
+    ENABLE_SPOTIFY: bool = Field(True, description="Enable Spotify integration")
+    ENABLE_APPLE_MUSIC: bool = Field(True, description="Enable Apple Music integration")
+    ENABLE_FEEDBACK: bool = Field(True, description="Enable feedback feature")
+    
+    # Development settings
+    DEBUG: bool = Field(False, description="Enable debug mode")
+    WEBHOOK_URL: Optional[str] = Field(None, description="Webhook URL for production")
+    HEALTH_PORT: int = Field(8000, description="Health check server port")
+    
+    # Music services configuration
+    MUSIC_SERVICES: Dict = Field(
+        default_factory=lambda: {
+            "spotify": {"name": "Spotify", "enabled": True, "icon": "🟢"},
+            "apple_music": {"name": "Apple Music", "enabled": True, "icon": "🍎"}
+        }
+    )
+    
+    @validator("BOT_TOKEN", pre=True)
+    def validate_bot_token(cls, v, values):
+        """Support multiple possible environment variable names for bot token."""
+        from os import environ
+        if not v:
+            for key in ["TELEGRAM_BOT_TOKEN", "Telegram_Token", "TELEGRAM_TOKEN", "BOT_TOKEN"]:
+                if key in environ:
+                    return environ[key]
+        return v
+    
+    @validator("OPENAI_API_KEY", pre=True)
+    def validate_openai_key(cls, v, values):
+        """Support multiple possible environment variable names for OpenAI key."""
+        from os import environ
+        if not v:
+            for key in ["OPENAI_API_KEY", "OPENAI_API_Key", "OPENAI_TOKEN", "GPT_API_KEY"]:
+                if key in environ:
+                    return environ[key]
+        return v
+    
+    @validator("MUSIC_SERVICES", always=True)
+    def update_music_services(cls, v, values):
+        """Update music services based on credentials."""
+        v["spotify"]["enabled"] = bool(
+            values.get("ENABLE_SPOTIFY") and 
+            values.get("SPOTIFY_CLIENT_ID") and 
+            values.get("SPOTIFY_CLIENT_SECRET")
+        )
+        v["apple_music"]["enabled"] = bool(
+            values.get("ENABLE_APPLE_MUSIC") and 
+            values.get("APPLE_TEAM_ID") and 
+            values.get("APPLE_KEY_ID") and 
+            values.get("APPLE_PRIVATE_KEY_PATH")
+        )
+        return v
+    
+    class Config:
+        """Pydantic configuration."""
+        env_file = ".env"
+        case_sensitive = True
+        env_prefix = ""
+
+# Create settings instance
+settings = Settings()
+
+def validate_settings() -> bool:
+    """Validate critical settings and log warnings."""
     from utils.logger import get_logger
     logger = get_logger(__name__)
     
-    available_services = []
-    if ENABLE_SPOTIFY:
-        available_services.append("Spotify")
-    if ENABLE_APPLE_MUSIC:
-        available_services.append("Apple Music")
+    # Check music services
+    available_services = [
+        service["name"] 
+        for service in settings.MUSIC_SERVICES.values() 
+        if service["enabled"]
+    ]
     
     if not available_services:
         logger.warning("⚠️  No music services configured. Bot will work but won't be able to create playlists.")
@@ -62,79 +134,4 @@ def validate_required_env_vars():
     else:
         logger.info(f"🎵 Available music services: {', '.join(available_services)}")
     
-    return True
-
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.5"))
-
-# Spotify API
-SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
-SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "http://localhost:8888/callback")
-
-# Apple Music API
-APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID")
-APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
-APPLE_PRIVATE_KEY_PATH = os.getenv("APPLE_PRIVATE_KEY_PATH")
-
-# Database
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/moodtape.db")
-
-# Database file paths
-TOKENS_DB_PATH = DATA_DIR / "tokens.sqlite"
-FEEDBACK_DB_PATH = DATA_DIR / "feedback.sqlite"
-QUERY_LOG_DB_PATH = DATA_DIR / "query_log.sqlite"
-
-# Logging
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Playlist settings
-DEFAULT_PLAYLIST_LENGTH = int(os.getenv("DEFAULT_PLAYLIST_LENGTH", "20"))
-MAX_PLAYLIST_LENGTH = int(os.getenv("MAX_PLAYLIST_LENGTH", "50"))
-
-# Rate limiting
-MAX_REQUESTS_PER_USER_PER_HOUR = int(os.getenv("MAX_REQUESTS_PER_USER_PER_HOUR", "10"))
-
-# Features flags
-ENABLE_SPOTIFY = os.getenv("ENABLE_SPOTIFY", "true").lower() == "true"
-ENABLE_APPLE_MUSIC = os.getenv("ENABLE_APPLE_MUSIC", "true").lower() == "true"
-ENABLE_FEEDBACK = os.getenv("ENABLE_FEEDBACK", "true").lower() == "true"
-
-# Development settings
-DEBUG = os.getenv("DEBUG", "false").lower() == "true"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # For production deployment
-
-# Music service configurations
-MUSIC_SERVICES = {
-    "spotify": {
-        "name": "Spotify",
-        "enabled": ENABLE_SPOTIFY,
-        "icon": "🟢"
-    },
-    "apple_music": {
-        "name": "Apple Music", 
-        "enabled": ENABLE_APPLE_MUSIC,
-        "icon": "🍎"
-    }
-}
-
-# Conditionally enable services based on credentials
-if SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET:
-    ENABLE_SPOTIFY = ENABLE_SPOTIFY and True
-else:
-    ENABLE_SPOTIFY = False
-    print("Warning: Spotify credentials not configured, Spotify will be disabled")
-
-if APPLE_TEAM_ID and APPLE_KEY_ID and APPLE_PRIVATE_KEY_PATH:
-    ENABLE_APPLE_MUSIC = ENABLE_APPLE_MUSIC and True
-else:
-    ENABLE_APPLE_MUSIC = False
-    print("Warning: Apple Music credentials not configured, Apple Music will be disabled")
-
-# Update music services with actual availability
-MUSIC_SERVICES["spotify"]["enabled"] = ENABLE_SPOTIFY
-MUSIC_SERVICES["apple_music"]["enabled"] = ENABLE_APPLE_MUSIC
-
-# Note: Service validation moved to runtime in validate_required_env_vars()
-# This allows bot to start without music services for initial setup 
+    return True 

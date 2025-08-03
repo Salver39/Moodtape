@@ -12,7 +12,7 @@ from urllib.parse import urlparse, parse_qs
 
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
-from config.settings import TELEGRAM_BOT_TOKEN, DEBUG, WEBHOOK_URL, validate_required_env_vars, DATA_DIR
+from config.settings import settings, validate_settings
 from utils.logger import get_logger
 
 # Import handlers
@@ -39,7 +39,7 @@ logger = get_logger(__name__)
 # Global application instance
 _application = None
 _shutdown_event = asyncio.Event()
-_pid_file = DATA_DIR / "bot.pid"
+_pid_file = settings.DATA_DIR / "bot.pid"
 
 def create_pid_file():
     """Create PID file to prevent multiple instances."""
@@ -289,14 +289,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def start_health_server():
     """Start a simple health check server for Render.com"""
     try:
-        # Используем отдельный порт для health check
-        health_port = int(os.getenv("HEALTH_PORT", "10000"))
-        server = HTTPServer(('0.0.0.0', health_port), HealthCheckHandler)
-        logger.info(f"🏥 Health check server started on port {health_port}")
+        server = HTTPServer(('0.0.0.0', settings.HEALTH_PORT), HealthCheckHandler)
+        logger.info(f"🏥 Health check server started on port {settings.HEALTH_PORT}")
         server.serve_forever()
     except Exception as e:
         logger.error(f"❌ Failed to start health server: {e}")
-        logger.error("💡 Set HEALTH_PORT environment variable to use a different port")
 
 
 def main() -> None:
@@ -314,7 +311,7 @@ def main() -> None:
     
     # Validate required environment variables
     try:
-        validate_required_env_vars()
+        validate_settings()
         logger.info("✅ All required environment variables are configured")
     except ValueError as e:
         logger.error(f"❌ Configuration error: {e}")
@@ -329,7 +326,7 @@ def main() -> None:
     # Create application with better error handling
     global _application
     try:
-        _application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        _application = Application.builder().token(settings.BOT_TOKEN).build()
         logger.info("✅ Telegram application created successfully")
     except Exception as e:
         logger.error(f"❌ Failed to create Telegram application: {e}")
@@ -395,7 +392,7 @@ def main() -> None:
     logger.info("🚀 Moodtape bot starting...")
     
     # Choose between webhook and polling mode
-    if WEBHOOK_URL:
+    if settings.WEBHOOK_URL:
         logger.info("🌐 Starting in WEBHOOK mode for production")
         try:
             from config.production import get_webhook_config
