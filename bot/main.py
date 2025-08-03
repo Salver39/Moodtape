@@ -10,6 +10,7 @@ import threading
 from urllib.parse import urlparse, parse_qs
 from aiohttp import web
 import logging
+from uuid import uuid4
 logging.getLogger("aiohttp.server").setLevel(logging.DEBUG)
 import redis
 
@@ -27,10 +28,50 @@ if not redis_url:
     sys.exit("ERROR: REDIS_URL не задан")
 
 client = redis.Redis.from_url(redis_url)
-# Устанавливаем ключ с NX и TTL 60 секунд
-acquired = client.set("moodtape_polling_lock", "1", nx=True, ex=60)
+LOCK_KEY = "moodtape_polling_lock"
+LOCK_TTL = 300  # в секундах
+token = f"{os.getpid()}:{uuid4()}"
+
+logger.info(f"🔒 Попытка получить Redis lock {LOCK_KEY} с токеном {token} (TTL={LOCK_TTL}s)")
+acquired = client.set(LOCK_KEY, token, nx=True, ex=LOCK_TTL)
 if not acquired:
-    sys.exit(0)  # другой экземпляр уже держит lock
+    holder = client.get(LOCK_KEY)
+    logger.info(f"🔒 Lock занят токеном {holder!r}, выхожу")
+    sys.exit(0)
+logger.info(f"✅ Получен Redis lock {LOCK_KEY}={token}")
+
+# Lua-скрипты для атомарных операций
+renew_lua = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("expire", KEYS[1], ARGV[2])
+else
+  return 0
+end
+"""
+
+del_lua = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+else
+  return 0
+end
+"""
+
+async def renew_lock():
+    while True:
+        await asyncio.sleep(LOCK_TTL * 0.6)
+        try:
+            extended = client.eval(renew_lua, 1, LOCK_KEY, token, LOCK_TTL)
+            if extended:
+                logger.debug(f"🔄 Продлён Redis lock {LOCK_KEY} до {LOCK_TTL}s")
+            else:
+                logger.error(f"❌ Невозможно продлить lock {LOCK_KEY} (значение не совпадает)")
+                sys.exit(1)
+        except Exception as e:
+            logger.error(f"❌ Ошибка продления Redis lock: {e!r}")
+            sys.exit(1)
+
+asyncio.get_event_loop().create_task(renew_lock())
 
 # Import handlers
 from bot.handlers.start import start_command, service_selection_callback, help_command
@@ -79,6 +120,18 @@ def get_application():
     """Get the global application instance."""
     return _application
 
+def on_shutdown():
+    """Handle shutdown signals gracefully."""
+    try:
+        removed = client.eval(del_lua, 1, LOCK_KEY, token)
+        if removed:
+            logger.info(f"✅ Освобождён Redis lock {LOCK_KEY}")
+        else:
+            logger.warning(f"⚠️ Lock {LOCK_KEY} уже освобождён или принадлежит другому")
+    except Exception as e:
+        logger.error(f"❌ Не удалось удалить Redis lock: {e!r}")
+    sys.exit(0)
+
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
     logger.info(f"🛑 Received signal {signum}, initiating graceful shutdown...")
@@ -93,15 +146,7 @@ def signal_handler(signum, frame):
         except Exception as e:
             logger.error(f"Error during graceful shutdown: {e}")
     
-    # Release Redis lock
-    try:
-        client.delete("moodtape_polling_lock")
-        logger.info("✅ Released Redis lock")
-    except Exception as e:
-        logger.error(f"❌ Failed to release Redis lock: {e}")
-    
-    logger.info("👋 Goodbye!")
-    sys.exit(0)
+    on_shutdown()
 
 def main() -> None:
     """Start the bot."""
@@ -240,6 +285,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("👋 Bot stopped by user (Ctrl+C)")
+        on_shutdown()
     except SystemExit:
         logger.info("👋 Bot stopped by system signal")
     except Exception as e:
@@ -261,11 +307,4 @@ if __name__ == "__main__":
             except:
                 pass
         
-        # Release Redis lock on error
-        try:
-            client.delete("moodtape_polling_lock")
-            logger.info("✅ Released Redis lock")
-        except Exception as e:
-            logger.error(f"❌ Failed to release Redis lock: {e}")
-        
-        sys.exit(1) 
+        on_shutdown() 
